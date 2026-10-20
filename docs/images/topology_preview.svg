@@ -1,0 +1,211 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 675" width="100%" height="100%" style="background:#020617; font-family:'JetBrains Mono', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <linearGradient id="headerGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+    <linearGradient id="neonGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" />
+      <stop offset="100%" stop-color="#818cf8" />
+    </linearGradient>
+    <filter id="dropShadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="6" flood-color="#000" flood-opacity="0.5"/>
+    </filter>
+  </defs>
+
+  <!-- Window Frame -->
+  <rect width="1200" height="675" fill="#020617" rx="12"/>
+  
+  <!-- Top Navigation Header -->
+  <rect x="0" y="0" width="1200" height="52" fill="url(#headerGrad)" stroke="#1e293b" stroke-width="1"/>
+  
+  <!-- Ghost Logo & Brand -->
+  <circle cx="34" cy="26" r="16" fill="#0f172a" stroke="#38bdf8" stroke-width="1.5"/>
+  <text x="34" y="32" text-anchor="middle" font-size="16">👻</text>
+  <text x="60" y="24" fill="#f8fafc" font-size="13" font-weight="bold">Un Fantasma en el Sistema</text>
+  <text x="60" y="38" fill="#64748b" font-size="10">www.unfantasmaenelsistema.com</text>
+
+  <!-- Nav links -->
+  <g transform="translate(340, 26)" font-size="12" font-weight="500">
+    <rect x="-10" y="-14" width="80" height="26" rx="6" fill="#0ea5e9" fill-opacity="0.15" stroke="#0ea5e9" stroke-width="1"/>
+    <text x="30" y="3" text-anchor="middle" fill="#38bdf8">Topología</text>
+    <text x="110" y="3" fill="#94a3b8">Terminal</text>
+    <text x="180" y="3" fill="#94a3b8">Wireshark</text>
+    <text x="260" y="3" fill="#94a3b8">Telemetría</text>
+    <text x="350" y="3" fill="#38bdf8">Subredes &amp; VLSM</text>
+    <text x="470" y="3" fill="#10b981">Inyector PDU</text>
+    <text x="570" y="3" fill="#818cf8">Informe Lab</text>
+  </g>
+
+  <!-- Action button -->
+  <rect x="1060" y="12" width="120" height="28" rx="6" fill="#0284c7"/>
+  <text x="1120" y="30" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="bold">Ver Misiones</text>
+
+  <!-- Sub-Header Simulation Playback Bar -->
+  <rect x="0" y="52" width="1200" height="36" fill="#0b1120" stroke="#1e293b" stroke-width="1"/>
+  <text x="20" y="74" fill="#64748b" font-size="11" font-weight="600">SIMULADOR:</text>
+  <rect x="100" y="58" width="75" height="24" rx="4" fill="#059669"/>
+  <text x="137" y="74" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="bold">▶ En Curso</text>
+  <text x="200" y="74" fill="#94a3b8" font-size="11">Velocidad: 1.0x</text>
+  <text x="310" y="74" fill="#94a3b8" font-size="11">Paquetes Activos: <tspan fill="#38bdf8" font-weight="bold">3</tspan></text>
+  <text x="460" y="74" fill="#94a3b8" font-size="11">Latencia Media: <tspan fill="#fbbf24" font-weight="bold">1.8 ms</tspan></text>
+  <rect x="1040" y="58" width="140" height="24" rx="4" fill="#1e1b4b" stroke="#4338ca"/>
+  <text x="1110" y="74" text-anchor="middle" fill="#c7d2fe" font-size="10.5" font-weight="bold">TRUNK 10G ACTIVO</text>
+
+  <!-- TOPOLOGY CANVAS AREA (Top 60%) -->
+  <g transform="translate(20, 100)">
+    <!-- Canvas background -->
+    <rect width="1160" height="320" rx="8" fill="#030712" stroke="#1e293b" stroke-width="1"/>
+    
+    <!-- Zone overlays (VLANs) -->
+    <!-- Aula 1 (VLAN 10) -->
+    <rect x="30" y="30" width="220" height="260" rx="8" fill="#0369a1" fill-opacity="0.06" stroke="#0284c7" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="45" y="55" fill="#38bdf8" font-size="11" font-weight="bold">VLAN 10 · Aula Informática 1</text>
+    <text x="45" y="70" fill="#64748b" font-size="9">192.168.10.0/24 (GW .1)</text>
+
+    <!-- Aula 2 (VLAN 20) -->
+    <rect x="270" y="30" width="220" height="260" rx="8" fill="#4338ca" fill-opacity="0.06" stroke="#6366f1" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="285" y="55" fill="#818cf8" font-size="11" font-weight="bold">VLAN 20 · Aula Informática 2</text>
+    <text x="285" y="70" fill="#64748b" font-size="9">192.168.20.0/24 (GW .1)</text>
+
+    <!-- Wi-Fi Guest (VLAN 50) -->
+    <rect x="510" y="170" width="220" height="120" rx="8" fill="#d97706" fill-opacity="0.06" stroke="#f59e0b" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="525" y="195" fill="#fbbf24" font-size="11" font-weight="bold">VLAN 50 · Wi-Fi Invitados</text>
+    <text x="525" y="210" fill="#64748b" font-size="9">172.16.50.0/24 · Aislada</text>
+
+    <!-- Admin Zone (VLAN 100) -->
+    <rect x="910" y="30" width="220" height="260" rx="8" fill="#047857" fill-opacity="0.06" stroke="#10b981" stroke-dasharray="4 4" stroke-width="1"/>
+    <text x="925" y="55" fill="#34d399" font-size="11" font-weight="bold">VLAN 100 · Servidores &amp; Admin</text>
+    <text x="925" y="70" fill="#64748b" font-size="9">192.168.100.0/24 (DMZ/ERP)</text>
+
+    <!-- Physical Cables / Links -->
+    <!-- PC101 to SW1 -->
+    <line x1="80" y1="130" x2="140" y2="220" stroke="#334155" stroke-width="2"/>
+    <!-- PC102 to SW1 -->
+    <line x1="190" y1="130" x2="140" y2="220" stroke="#334155" stroke-width="2"/>
+    <!-- SW1 to Router Académico -->
+    <line x1="140" y1="220" x2="570" y2="80" stroke="#818cf8" stroke-width="2.5"/>
+    
+    <!-- Router Acad to Router Admin (10G Trunk) -->
+    <line x1="570" y1="80" x2="830" y2="80" stroke="#6366f1" stroke-width="3.5"/>
+    <!-- Router Admin to SW Admin -->
+    <line x1="830" y1="80" x2="1020" y2="150" stroke="#818cf8" stroke-width="2.5"/>
+    <!-- SW Admin to SRV Web & ERP -->
+    <line x1="1020" y1="150" x2="960" y2="230" stroke="#334155" stroke-width="2"/>
+    <line x1="1020" y1="150" x2="1070" y2="230" stroke="#334155" stroke-width="2"/>
+
+    <!-- Latency Badges on cables -->
+    <rect x="330" y="140" width="46" height="16" rx="4" fill="#090d16" stroke="#334155" stroke-width="1"/>
+    <text x="353" y="152" text-anchor="middle" fill="#94a3b8" font-size="9" font-weight="bold">1.2 ms</text>
+
+    <rect x="670" y="68" width="60" height="18" rx="4" fill="#1e1b4b" stroke="#6366f1" stroke-width="1"/>
+    <text x="700" y="81" text-anchor="middle" fill="#c7d2fe" font-size="9" font-weight="bold">🔗 10G · 0.8ms</text>
+
+    <!-- Moving Packet Animation Simulation -->
+    <circle cx="450" cy="115" r="7" fill="#38bdf8" filter="url(#dropShadow)"/>
+    <circle cx="450" cy="115" r="14" fill="#38bdf8" fill-opacity="0.25"/>
+    <text x="450" y="100" text-anchor="middle" fill="#38bdf8" font-size="9" font-weight="bold">ICMP Echo [802.1Q Tag: 10]</text>
+
+    <!-- Network Device Nodes -->
+    <!-- PC-101 -->
+    <g transform="translate(60, 110)">
+      <circle cx="20" cy="20" r="18" fill="#0f172a" stroke="#38bdf8" stroke-width="2"/>
+      <text x="20" y="25" text-anchor="middle" font-size="14">💻</text>
+      <text x="20" y="48" text-anchor="middle" fill="#f1f5f9" font-size="9.5" font-weight="bold">PC-101</text>
+      <text x="20" y="58" text-anchor="middle" fill="#64748b" font-size="8">.10.11</text>
+    </g>
+
+    <!-- PC-102 -->
+    <g transform="translate(170, 110)">
+      <circle cx="20" cy="20" r="18" fill="#0f172a" stroke="#475569" stroke-width="1.5"/>
+      <text x="20" y="25" text-anchor="middle" font-size="14">💻</text>
+      <text x="20" y="48" text-anchor="middle" fill="#f1f5f9" font-size="9.5" font-weight="bold">PC-102</text>
+      <text x="20" y="58" text-anchor="middle" fill="#64748b" font-size="8">.10.12</text>
+    </g>
+
+    <!-- Switch Aula 1 -->
+    <g transform="translate(120, 200)">
+      <rect x="0" y="0" width="40" height="28" rx="6" fill="#1e293b" stroke="#64748b" stroke-width="1.5"/>
+      <text x="20" y="18" text-anchor="middle" font-size="12">🔀</text>
+      <text x="20" y="38" text-anchor="middle" fill="#cbd5e1" font-size="9" font-weight="bold">SW-Aula1</text>
+    </g>
+
+    <!-- Router Académico (Core L3) -->
+    <g transform="translate(550, 60)">
+      <circle cx="20" cy="20" r="22" fill="#1e1b4b" stroke="#818cf8" stroke-width="2"/>
+      <text x="20" y="26" text-anchor="middle" font-size="15">🌐</text>
+      <text x="20" y="52" text-anchor="middle" fill="#e0e7ff" font-size="10" font-weight="bold">RTR-Académico</text>
+      <text x="20" y="63" text-anchor="middle" fill="#818cf8" font-size="8.5">10.0.0.1 (GW)</text>
+    </g>
+
+    <!-- Router Administración (Firewall) -->
+    <g transform="translate(810, 60)">
+      <circle cx="20" cy="20" r="22" fill="#1e1b4b" stroke="#f43f5e" stroke-width="2"/>
+      <text x="20" y="26" text-anchor="middle" font-size="15">🛡️</text>
+      <text x="20" y="52" text-anchor="middle" fill="#ffe4e6" font-size="10" font-weight="bold">RTR-Admin (FW)</text>
+      <text x="20" y="63" text-anchor="middle" fill="#fb7185" font-size="8.5">10.0.0.2</text>
+    </g>
+
+    <!-- Server Web & ERP -->
+    <g transform="translate(940, 210)">
+      <rect x="0" y="0" width="38" height="34" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1.5"/>
+      <text x="19" y="22" text-anchor="middle" font-size="14">🖥️</text>
+      <text x="19" y="44" text-anchor="middle" fill="#ecfdf5" font-size="9" font-weight="bold">SRV-Web</text>
+      <text x="19" y="53" text-anchor="middle" fill="#6ee7b7" font-size="7.5">.100.10</text>
+    </g>
+
+    <g transform="translate(1050, 210)">
+      <rect x="0" y="0" width="38" height="34" rx="6" fill="#064e3b" stroke="#10b981" stroke-width="1.5"/>
+      <text x="19" y="22" text-anchor="middle" font-size="14">🗄️</text>
+      <text x="19" y="44" text-anchor="middle" fill="#ecfdf5" font-size="9" font-weight="bold">SRV-ERP</text>
+      <text x="19" y="53" text-anchor="middle" fill="#6ee7b7" font-size="7.5">.100.20</text>
+    </g>
+  </g>
+
+  <!-- BOTTOM DOCKED WORKSPACE (Bottom 35%) -->
+  <g transform="translate(20, 435)">
+    <!-- Dock Container -->
+    <rect width="1160" height="205" rx="8" fill="#050914" stroke="#1e293b" stroke-width="1"/>
+    
+    <!-- Dock Tabs Header -->
+    <rect x="0" y="0" width="1160" height="32" rx="8" fill="#0f172a"/>
+    <rect x="12" y="4" width="130" height="24" rx="4" fill="#1e293b"/>
+    <text x="77" y="20" text-anchor="middle" fill="#38bdf8" font-size="11" font-weight="bold">💻 Terminal (PC-101)</text>
+    
+    <text x="190" y="20" fill="#94a3b8" font-size="11">🦈 Wireshark (38)</text>
+    <text x="310" y="20" fill="#94a3b8" font-size="11">📊 Telemetría Recharts</text>
+
+    <!-- Terminal Content (Left) -->
+    <g transform="translate(15, 45)" font-size="10.5">
+      <text x="0" y="15" fill="#38bdf8">pc-101:~$ <tspan fill="#ffffff">ping 192.168.100.10</tspan></text>
+      <text x="0" y="32" fill="#64748b">PING 192.168.100.10 (192.168.100.10) 56(84) bytes of data.</text>
+      <text x="0" y="49" fill="#10b981">64 bytes from 192.168.100.10: icmp_seq=1 ttl=62 time=2.84 ms [VLAN 10 -> VLAN 100]</text>
+      <text x="0" y="66" fill="#10b981">64 bytes from 192.168.100.10: icmp_seq=2 ttl=62 time=2.71 ms (enrutado por 10.0.0.1)</text>
+      <text x="0" y="83" fill="#38bdf8">pc-101:~$ <tspan fill="#ffffff">curl http://campus.academia.edu</tspan></text>
+      <text x="0" y="100" fill="#34d399">&lt;html&gt;&lt;title&gt;Campus Virtual Academia&lt;/title&gt;&lt;h1&gt;Bienvenido&lt;/h1&gt;&lt;/html&gt;</text>
+      <text x="0" y="120" fill="#38bdf8">pc-101:~$ <tspan fill="#38bdf8" opacity="0.8">█</tspan></text>
+    </g>
+
+    <!-- Wireshark Mini-Stream (Right) -->
+    <g transform="translate(680, 45)">
+      <rect width="465" height="145" rx="6" fill="#090d16" stroke="#1e293b" stroke-width="1"/>
+      <rect x="0" y="0" width="465" height="22" fill="#0f172a" rx="6"/>
+      <text x="10" y="15" fill="#64748b" font-size="9.5" font-weight="bold">WIRESHARK PACKET DISSECTION · CAPA 2/3/4</text>
+      
+      <text x="10" y="38" fill="#38bdf8" font-size="9.5" font-weight="bold">Frame 3: 74 bytes on wire · Ethernet II (802.1Q)</text>
+      <text x="20" y="52" fill="#94a3b8" font-size="9">Src MAC: 00:1A:2B:3C:4D:11 | Dst MAC: 00:1A:2B:3C:4D:01</text>
+      <text x="20" y="66" fill="#818cf8" font-size="9" font-weight="bold">IEEE 802.1Q VLAN Tag: VID 10 (Aula 1) · Priority: 0</text>
+      
+      <text x="10" y="86" fill="#34d399" font-size="9.5" font-weight="bold">Internet Protocol Version 4 (IPv4)</text>
+      <text x="20" y="100" fill="#94a3b8" font-size="9">Src: 192.168.10.11 · Dst: 192.168.100.10 · TTL: 64 · Proto: ICMP (1)</text>
+
+      <text x="10" y="120" fill="#fbbf24" font-size="9.5" font-weight="bold">Internet Control Message Protocol (Echo Request)</text>
+      <text x="20" y="134" fill="#cbd5e1" font-size="9">Type: 8 (Echo Request) · Code: 0 · RTT Medido: 2.84 ms</text>
+    </g>
+  </g>
+
+  <!-- Bottom Footer Line -->
+  <line x1="0" y1="650" x2="1200" y2="650" stroke="#1e293b" stroke-width="1"/>
+  <text x="30" y="665" fill="#64748b" font-size="10">Un Fantasma en el Sistema — Simulador de Redes Educativo L2/L3</text>
+  <text x="1170" y="665" text-anchor="end" fill="#38bdf8" font-size="10">https://www.unfantasmaenelsistema.com/</text>
+</svg>

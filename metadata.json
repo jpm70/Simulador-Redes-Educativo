@@ -1,0 +1,6 @@
+{
+  "name": "Simulador de Red Academia",
+  "description": "Simulador interactivo y educativo de topología de red para una academia con visualización de paquetes en tiempo real, terminal de comandos, inspección Wireshark y múltiples subredes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

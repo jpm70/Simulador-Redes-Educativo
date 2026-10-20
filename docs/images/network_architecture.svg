@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 500" width="100%" height="100%" style="background:#020617; font-family:'JetBrains Mono', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+  <defs>
+    <linearGradient id="boxGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#020617" />
+    </linearGradient>
+  </defs>
+
+  <!-- Title -->
+  <text x="40" y="40" fill="#f8fafc" font-size="18" font-weight="bold">Arquitectura Lógica de Red y Segmentación IEEE 802.1Q</text>
+  <text x="40" y="60" fill="#64748b" font-size="11">Topología de Subredes, Enrutamiento Estático / OSPF y Filtrado por Firewall</text>
+
+  <!-- Central Router Trunk -->
+  <g transform="translate(380, 100)">
+    <!-- Router Académico -->
+    <rect x="0" y="0" width="150" height="90" rx="8" fill="url(#boxGrad)" stroke="#6366f1" stroke-width="2"/>
+    <text x="75" y="28" text-anchor="middle" fill="#818cf8" font-size="12" font-weight="bold">Router Académico</text>
+    <text x="75" y="46" text-anchor="middle" fill="#94a3b8" font-size="9.5">rtr-core-acad</text>
+    <text x="75" y="62" text-anchor="middle" fill="#38bdf8" font-size="9">eth0: 10.0.0.1/30</text>
+    <text x="75" y="76" text-anchor="middle" fill="#64748b" font-size="8.5">GW VLANs 10, 20, 50</text>
+
+    <!-- Trunk Cable P2P -->
+    <line x1="150" y1="45" x2="230" y2="45" stroke="#6366f1" stroke-width="4"/>
+    <rect x="165" y="25" width="50" height="18" rx="3" fill="#1e1b4b" stroke="#818cf8" stroke-width="1"/>
+    <text x="190" y="37" text-anchor="middle" fill="#c7d2fe" font-size="8.5" font-weight="bold">10G P2P</text>
+    <text x="190" y="55" text-anchor="middle" fill="#a5b4fc" font-size="8">10.0.0.0/30</text>
+
+    <!-- Router Administración -->
+    <rect x="230" y="0" width="150" height="90" rx="8" fill="url(#boxGrad)" stroke="#f43f5e" stroke-width="2"/>
+    <text x="305" y="28" text-anchor="middle" fill="#fb7185" font-size="12" font-weight="bold">Router Admin (FW)</text>
+    <text x="305" y="46" text-anchor="middle" fill="#94a3b8" font-size="9.5">rtr-admin</text>
+    <text x="305" y="62" text-anchor="middle" fill="#38bdf8" font-size="9">eth0: 10.0.0.2/30</text>
+    <text x="305" y="76" text-anchor="middle" fill="#f43f5e" font-size="8.5">Firewall L3/L4 Activo</text>
+  </g>
+
+  <!-- Left: Academic Subnets -->
+  <!-- VLAN 10 -->
+  <g transform="translate(40, 240)">
+    <rect width="210" height="190" rx="8" fill="#0c1929" stroke="#0284c7" stroke-width="1.5"/>
+    <rect x="0" y="0" width="210" height="28" rx="8" fill="#0369a1"/>
+    <text x="105" y="18" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="bold">VLAN 10 · Aula 1</text>
+    
+    <text x="15" y="50" fill="#38bdf8" font-size="10" font-weight="bold">Red: 192.168.10.0/24</text>
+    <text x="15" y="66" fill="#94a3b8" font-size="9">Máscara: 255.255.255.0</text>
+    <text x="15" y="82" fill="#94a3b8" font-size="9">Gateway: 192.168.10.1</text>
+    <text x="15" y="98" fill="#94a3b8" font-size="9">Broadcast: 192.168.10.255</text>
+    <text x="15" y="114" fill="#34d399" font-size="9">Hosts útiles: 254</text>
+    
+    <line x1="10" y1="126" x2="200" y2="126" stroke="#1e293b"/>
+    <text x="15" y="145" fill="#cbd5e1" font-size="8.5">💻 PC-101: 192.168.10.11</text>
+    <text x="15" y="160" fill="#cbd5e1" font-size="8.5">💻 PC-102: 192.168.10.12</text>
+    <text x="15" y="175" fill="#cbd5e1" font-size="8.5">🔀 Switch SW-Aula1 (Port 1-4)</text>
+  </g>
+
+  <!-- VLAN 20 -->
+  <g transform="translate(280, 240)">
+    <rect width="210" height="190" rx="8" fill="#13142e" stroke="#6366f1" stroke-width="1.5"/>
+    <rect x="0" y="0" width="210" height="28" rx="8" fill="#4338ca"/>
+    <text x="105" y="18" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="bold">VLAN 20 · Aula 2</text>
+    
+    <text x="15" y="50" fill="#818cf8" font-size="10" font-weight="bold">Red: 192.168.20.0/24</text>
+    <text x="15" y="66" fill="#94a3b8" font-size="9">Máscara: 255.255.255.0</text>
+    <text x="15" y="82" fill="#94a3b8" font-size="9">Gateway: 192.168.20.1</text>
+    <text x="15" y="98" fill="#94a3b8" font-size="9">Broadcast: 192.168.20.255</text>
+    <text x="15" y="114" fill="#34d399" font-size="9">Hosts útiles: 254</text>
+    
+    <line x1="10" y1="126" x2="200" y2="126" stroke="#1e293b"/>
+    <text x="15" y="145" fill="#cbd5e1" font-size="8.5">💻 PC-201: 192.168.20.11</text>
+    <text x="15" y="160" fill="#cbd5e1" font-size="8.5">💻 PC-202: 192.168.20.12</text>
+    <text x="15" y="175" fill="#cbd5e1" font-size="8.5">🔀 Switch SW-Aula2 (Port 1-4)</text>
+  </g>
+
+  <!-- VLAN 50 Wi-Fi Guests -->
+  <g transform="translate(520, 240)">
+    <rect width="210" height="190" rx="8" fill="#201509" stroke="#f59e0b" stroke-width="1.5"/>
+    <rect x="0" y="0" width="210" height="28" rx="8" fill="#b45309"/>
+    <text x="105" y="18" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="bold">VLAN 50 · Wi-Fi Invitados</text>
+    
+    <text x="15" y="50" fill="#fbbf24" font-size="10" font-weight="bold">Red: 172.16.50.0/24</text>
+    <text x="15" y="66" fill="#94a3b8" font-size="9">Máscara: 255.255.255.0</text>
+    <text x="15" y="82" fill="#94a3b8" font-size="9">Gateway: 172.16.50.1</text>
+    <text x="15" y="98" fill="#94a3b8" font-size="9">Broadcast: 172.16.50.255</text>
+    <text x="15" y="114" fill="#f43f5e" font-size="9">Acceso Admin: BLOQUEADO</text>
+    
+    <line x1="10" y1="126" x2="200" y2="126" stroke="#1e293b"/>
+    <text x="15" y="145" fill="#cbd5e1" font-size="8.5">📱 Smartphone Guest: .50.15</text>
+    <text x="15" y="160" fill="#cbd5e1" font-size="8.5">💻 Laptop Guest: .50.12</text>
+    <text x="15" y="175" fill="#cbd5e1" font-size="8.5">📶 AP-Campus-01 (Wi-Fi 6)</text>
+  </g>
+
+  <!-- Right: Administration & Servers -->
+  <!-- VLAN 100 -->
+  <g transform="translate(800, 240)">
+    <rect width="260" height="190" rx="8" fill="#042217" stroke="#10b981" stroke-width="1.5"/>
+    <rect x="0" y="0" width="260" height="28" rx="8" fill="#065f46"/>
+    <text x="130" y="18" text-anchor="middle" fill="#ffffff" font-size="11" font-weight="bold">VLAN 100 · Servidores &amp; ERP</text>
+    
+    <text x="15" y="50" fill="#34d399" font-size="10" font-weight="bold">Red: 192.168.100.0/24</text>
+    <text x="15" y="66" fill="#94a3b8" font-size="9">Máscara: 255.255.255.0 · Gateway: .100.1</text>
+    <text x="15" y="82" fill="#94a3b8" font-size="9">Protegido por Reglas de Firewall L3/L4</text>
+    <text x="15" y="98" fill="#38bdf8" font-size="9">DNS Local: campus.academia.edu</text>
+    
+    <line x1="10" y1="110" x2="250" y2="110" stroke="#1e293b"/>
+    <text x="15" y="130" fill="#cbd5e1" font-size="8.5">🖥️ SRV-Web (HTTP/80): 192.168.100.10</text>
+    <text x="15" y="145" fill="#cbd5e1" font-size="8.5">🗄️ SRV-ERP (Oracle/TCP): 192.168.100.20</text>
+    <text x="15" y="160" fill="#cbd5e1" font-size="8.5">💻 PC-Admin: 192.168.100.30</text>
+    <text x="15" y="175" fill="#cbd5e1" font-size="8.5">🔀 Switch SW-Admin (Troncal 802.1Q)</text>
+  </g>
+
+  <!-- Connecting Lines from Router to Subnets -->
+  <path d="M 420 190 L 420 220 L 145 220 L 145 240" fill="none" stroke="#0284c7" stroke-width="2"/>
+  <path d="M 440 190 L 440 220 L 385 220 L 385 240" fill="none" stroke="#6366f1" stroke-width="2"/>
+  <path d="M 460 190 L 460 220 L 625 220 L 625 240" fill="none" stroke="#f59e0b" stroke-width="2"/>
+  <path d="M 685 190 L 685 220 L 930 220 L 930 240" fill="none" stroke="#10b981" stroke-width="2"/>
+
+  <!-- Footer link -->
+  <text x="550" y="475" text-anchor="middle" fill="#64748b" font-size="10">Diseñado para la comunidad educativa de redes y ciberseguridad — https://www.unfantasmaenelsistema.com/</text>
+</svg>
