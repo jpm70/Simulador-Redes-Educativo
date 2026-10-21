@@ -169,7 +169,7 @@ export const LabReportModal: React.FC<LabReportModalProps> = ({
             className="flex items-center gap-2 text-xs text-slate-400 hover:text-sky-400 transition-colors"
           >
             <img
-              src="/assets/aistudio/icono_81a3db5b.png"
+              src={`${import.meta.env.BASE_URL}assets/aistudio/icono_81a3db5b.png`}
               alt="Logo"
               className="w-4 h-4 aspect-square object-contain"
             />

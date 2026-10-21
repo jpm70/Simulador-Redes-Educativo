@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { X, Network, Calculator, Sliders, Check, Copy, ExternalLink, Shield, Server, Laptop, Wifi } from 'lucide-react';
 import { NetworkNode } from '../types/network';
+import { isValidIpv4 } from '../services/networkEngine';
 
 interface SubnetInfo {
   vlanId: number;
@@ -30,7 +31,12 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
   const [activeTab, setActiveTab] = useState<'campus' | 'calculator'>('campus');
   
   // Custom calculator state
-  const [calcIp, setCalcIp] = useState<string>('192.168.10.0');
+  const [calcIp, setCalcIpRaw] = useState<string>('192.168.10.0');
+  const [lastValidIp, setLastValidIp] = useState<string>('192.168.10.0');
+  const setCalcIp = (value: string) => {
+    setCalcIpRaw(value);
+    if (isValidIpv4(value.trim())) setLastValidIp(value.trim());
+  };
   const [calcCidr, setCalcCidr] = useState<number>(24);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
@@ -65,6 +71,19 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
       devices: nodes.filter((n) => n.zone === 'aula2').map((n) => `${n.name} (${n.primaryIp})`),
     },
     {
+      vlanId: 30,
+      name: 'VLAN 30 · Aula 3 Robótica & Dev',
+      network: '192.168.30.0',
+      cidr: 24,
+      mask: '255.255.255.0',
+      gateway: '192.168.30.1 (Router Académico)',
+      broadcast: '192.168.30.255',
+      usableRange: '192.168.30.1 - 192.168.30.254',
+      hostsCount: 254,
+      description: 'Subred cableada para equipos de prácticas de estudiantes del Aula 3.',
+      devices: nodes.filter((n) => n.zone === 'aula3').map((n) => `${n.name} (${n.primaryIp})`),
+    },
+    {
       vlanId: 50,
       name: 'VLAN 50 · Wi-Fi Invitados (Segmentada)',
       network: '172.16.50.0',
@@ -79,7 +98,7 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
     },
     {
       vlanId: 100,
-      name: 'VLAN 100 · Administración & Servidores',
+      name: 'VLAN 100 · Dirección & Secretaría',
       network: '192.168.100.0',
       cidr: 24,
       mask: '255.255.255.0',
@@ -87,8 +106,21 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
       broadcast: '192.168.100.255',
       usableRange: '192.168.100.1 - 192.168.100.254',
       hostsCount: 254,
-      description: 'Zona de alta seguridad protegida por Firewall L3/L4 con Servidor Web, DNS y ERP.',
-      devices: nodes.filter((n) => n.zone.startsWith('admin')).map((n) => `${n.name} (${n.primaryIp})`),
+      description: 'Zona de alta seguridad con el servidor ERP y la base de datos de secretaría (puerto 1521 protegido por ACL).',
+      devices: nodes.filter((n) => n.zone === 'admin-zone1').map((n) => `${n.name} (${n.primaryIp})`),
+    },
+    {
+      vlanId: 200,
+      name: 'VLAN 200 · Profesores & Servidores',
+      network: '192.168.200.0',
+      cidr: 24,
+      mask: '255.255.255.0',
+      gateway: '192.168.200.1 (Router Administración)',
+      broadcast: '192.168.200.255',
+      usableRange: '192.168.200.1 - 192.168.200.254',
+      hostsCount: 254,
+      description: 'Subred docente con SRV-Campus (servidor web y DNS interno del campus).',
+      devices: nodes.filter((n) => n.zone === 'admin-zone2').map((n) => `${n.name} (${n.primaryIp})`),
     },
     {
       vlanId: 1,
@@ -96,12 +128,12 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
       network: '10.0.0.0',
       cidr: 30,
       mask: '255.255.255.252',
-      gateway: 'Enrutamiento Estático / OSPF',
+      gateway: 'Rutas estáticas entre routers',
       broadcast: '10.0.0.3',
       usableRange: '10.0.0.1 - 10.0.0.2',
       hostsCount: 2,
       description: 'Enlace troncal /30 de alta velocidad entre el Router Académico y el Router de Administración.',
-      devices: ['rtr-core-acad (10.0.0.1)', 'rtr-admin (10.0.0.2)'],
+      devices: ['R-Academico (10.0.0.1)', 'R-Admin (10.0.0.2)'],
     },
   ];
 
@@ -143,7 +175,9 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
     // Class & Private determination
     const firstOctet = (rawInt >>> 24) & 255;
     let ipClass = 'C';
-    if (firstOctet >= 1 && firstOctet <= 126) ipClass = 'A';
+    if (firstOctet === 0) ipClass = 'Reservada (0.0.0.0/8)';
+    else if (firstOctet === 127) ipClass = 'A (Loopback 127.0.0.0/8)';
+    else if (firstOctet >= 1 && firstOctet <= 126) ipClass = 'A';
     else if (firstOctet >= 128 && firstOctet <= 191) ipClass = 'B';
     else if (firstOctet >= 192 && firstOctet <= 223) ipClass = 'C';
     else if (firstOctet >= 224 && firstOctet <= 239) ipClass = 'D (Multicast)';
@@ -174,7 +208,8 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
     };
   };
 
-  const calcResult = calculateSubnet(calcIp, calcCidr);
+  const ipIsValid = isValidIpv4(calcIp.trim());
+  const calcResult = calculateSubnet(lastValidIp, calcCidr);
 
   const copyToClipboard = (text: string, key: string) => {
     navigator.clipboard.writeText(text);
@@ -309,8 +344,13 @@ export const SubnetCalculatorModal: React.FC<SubnetCalculatorModalProps> = ({
                       value={calcIp}
                       onChange={(e) => setCalcIp(e.target.value)}
                       placeholder="192.168.10.0"
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-sm font-mono text-sky-400 focus:outline-none focus:border-sky-500"
+                      className={`w-full bg-slate-900 border rounded-lg px-3 py-2 text-sm font-mono text-sky-400 focus:outline-none ${ipIsValid ? 'border-slate-700 focus:border-sky-500' : 'border-rose-600 focus:border-rose-500'}`}
                     />
+                    {!ipIsValid && (
+                      <p className="text-[11px] text-rose-400">
+                        IPv4 no válida (4 octetos de 0 a 255). Se muestran los cálculos de {lastValidIp}.
+                      </p>
+                    )}
                   </div>
 
                   <div className="space-y-1.5">

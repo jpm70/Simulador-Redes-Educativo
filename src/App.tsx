@@ -1,8 +1,3 @@
-/**
- * @license
- * SPDX-License-Identifier: Apache-2.0
- */
-
 import React, { useState, useEffect, useRef } from 'react';
 import {
   NetworkNode,
@@ -13,6 +8,7 @@ import {
   SubnetThresholds,
   ProtocolType,
   FirewallRule,
+  ArpTableEntry,
 } from './types/network';
 import { INITIAL_NODES, INITIAL_LINKS, LAB_MISSIONS } from './data/topologyData';
 import {
@@ -23,7 +19,10 @@ import {
   createHttpSimulation,
   createTracerouteSimulation,
   isSameSubnet,
-  getNodeVlan,
+  isValidIpv4,
+  ipToInt,
+  getZoneVlan,
+  portTowards,
   updateSwitchMacTables,
   calculateLinkDynamicLatency,
 } from './services/networkEngine';
@@ -42,11 +41,19 @@ import { RouterAclModal } from './components/RouterAclModal';
 import { soundFx } from './utils/audioEffects';
 import { Terminal, Network, ShieldCheck, Sparkles, AlertCircle, BarChart3, ExternalLink } from 'lucide-react';
 
+const TRUNK_LINK_ID = 'link-trunk-routers';
+const LOGO_URL = `${import.meta.env.BASE_URL}assets/aistudio/icono_81a3db5b.png`;
+
+// Add or refresh an ARP cache entry
+const learnArp = (table: ArpTableEntry[] = [], ip: string, mac: string): ArpTableEntry[] => {
+  const entry: ArpTableEntry = { ip, mac, interfaceName: 'eth0', type: 'dynamic', updatedAt: Date.now() };
+  return table.some((a) => a.ip === ip) ? table.map((a) => (a.ip === ip ? { ...a, mac, updatedAt: entry.updatedAt } : a)) : [...table, entry];
+};
+
 export default function App() {
   // Network Topo State
   const [nodes, setNodes] = useState<NetworkNode[]>(INITIAL_NODES);
   const [links, setLinks] = useState<NetworkLink[]>(INITIAL_LINKS);
-  const [routerMode, setRouterMode] = useState<RouterInterconnectionMode>('interconnected');
   const [thresholds, setThresholds] = useState<SubnetThresholds>({
     aulas: 350,
     invitados: 100,
@@ -57,6 +64,10 @@ export default function App() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>('pc-101');
   const [detailModalNode, setDetailModalNode] = useState<NetworkNode | null>(null);
 
+  // Router mode is not separate state: it is the status of the inter-router trunk link
+  const routerMode: RouterInterconnectionMode =
+    links.find((l) => l.id === TRUNK_LINK_ID)?.status === 'down' ? 'independent' : 'interconnected';
+
   // Simulation Packets & Execution
   const [activePackets, setActivePackets] = useState<SimulatedPacket[]>([]);
   const [packetHistory, setPacketHistory] = useState<SimulatedPacket[]>([]);
@@ -64,9 +75,20 @@ export default function App() {
   const [speed, setSpeed] = useState<number>(1);
   const [showLabels, setShowLabels] = useState<boolean>(true);
 
+  // Refs read by the timers (they must not capture stale state)
+  const activeRef = useRef<SimulatedPacket[]>([]);
+  const nodesRef = useRef(nodes);
+  const linksRef = useRef(links);
+  const speedRef = useRef(speed);
+  const thresholdsRef = useRef(thresholds);
+  const dropCounterRef = useRef(0);
+  nodesRef.current = nodes;
+  linksRef.current = links;
+  speedRef.current = speed;
+  thresholdsRef.current = thresholds;
+
   // UI Panels & Labs
   const [bottomTab, setBottomTab] = useState<'terminal' | 'wireshark' | 'telemetry'>('terminal');
-  const [topView, setTopView] = useState<'topology' | 'telemetry'>('topology');
   const [isLabsModalOpen, setIsLabsModalOpen] = useState<boolean>(false);
   const [completedMissionIds, setCompletedMissionIds] = useState<string[]>([]);
   const [highlightedPacket, setHighlightedPacket] = useState<SimulatedPacket | null>(null);
@@ -82,53 +104,6 @@ export default function App() {
   const handleToggleMute = () => {
     const nextMuted = soundFx.toggleMute();
     setIsMuted(nextMuted);
-  };
-
-  // Toggle individual link status (Link Cut / Cable Fault simulation)
-  const handleToggleLink = (linkId: string) => {
-    setLinks((prevLinks) =>
-      prevLinks.map((l) => {
-        if (l.id === linkId) {
-          const nextStatus = l.status === 'down' ? 'active' : 'down';
-          addTerminalLog(
-            `[FALLO FÍSICO / ENLACE] Enlace ${l.id} (${l.fromPort} ↔ ${l.toPort}): estado cambiado a ${nextStatus.toUpperCase()}. ${
-              nextStatus === 'down'
-                ? '⚠️ Cable desconectado. Las tramas en este tramo se descartarán.'
-                : '✅ Enlace físico restablecido (LINK UP).'
-            }`,
-            nextStatus === 'active' ? 'success' : 'error'
-          );
-          if (nextStatus === 'down') {
-            soundFx.playPacketDropped();
-          } else {
-            soundFx.playPacketDelivered();
-          }
-          return { ...l, status: nextStatus };
-        }
-        return l;
-      })
-    );
-  };
-
-  // Toggle between Interconnected Routers (Trunk UP) and Independent Networks (Trunk DOWN)
-  const handleToggleRouterMode = () => {
-    setRouterMode((prev) => {
-      const next: RouterInterconnectionMode = prev === 'interconnected' ? 'independent' : 'interconnected';
-      setLinks((prevLinks) =>
-        prevLinks.map((l) =>
-          l.id === 'link-trunk-routers'
-            ? { ...l, status: next === 'interconnected' ? 'active' : 'down' }
-            : l
-        )
-      );
-      addTerminalLog(
-        next === 'interconnected'
-          ? '[TOPOLOGÍA] Enlace Troncal 10G CONECTADO (UP): Routers interconectados (10.0.0.1 <-> 10.0.0.2). Enrutamiento L3 habilitado entre Aulas y Administración.'
-          : '[TOPOLOGÍA] Enlace Troncal DESCONECTADO (DOWN): Redes 100% Independientes. Router Académico y Router Administración operan aislados.',
-        next === 'interconnected' ? 'success' : 'error'
-      );
-      return next;
-    });
   };
 
   // Telemetry time series for recharts
@@ -170,152 +145,163 @@ export default function App() {
     ]);
   };
 
-  // Main Animation Tick for packet flow - Packet travel time fluctuates realistically based on link latency & subnet load
-  useEffect(() => {
-    if (!isPlaying || activePackets.length === 0) return;
+  // ---- Packet queue (every change goes through activeRef so timers never overwrite each other) ----
+  const updateActive = (fn: (prev: SimulatedPacket[]) => SimulatedPacket[]) => {
+    activeRef.current = fn(activeRef.current);
+    setActivePackets(activeRef.current);
+  };
 
-    const interval = setInterval(() => {
-      setActivePackets((prevPackets) => {
-        const nextPackets: SimulatedPacket[] = [];
+  const markInHistory = (updates: Map<string, SimulatedPacket['status']>) => {
+    if (updates.size === 0) return;
+    setPacketHistory((prev) => prev.map((p) => (updates.has(p.id) ? { ...p, status: updates.get(p.id)! } : p)));
+  };
 
-        for (const pkt of prevPackets) {
-          if (pkt.status === 'delivered' || pkt.status === 'dropped') {
-            continue; // Will be cleaned up
-          }
+  const enqueuePacket = (pkt: SimulatedPacket, delayMs = 0) => {
+    const add = () => {
+      if (pkt.steps.length === 0) {
+        // Nothing to animate (e.g. a packet to itself, or no physical path at all)
+        const status = pkt.destNodeId === pkt.sourceNodeId ? 'delivered' : 'dropped';
+        setPacketHistory((prev) => [{ ...pkt, status }, ...prev]);
+        return;
+      }
+      setPacketHistory((prev) => [pkt, ...prev]);
+      updateActive((prev) => [...prev, pkt]);
+    };
+    if (delayMs > 0) setTimeout(add, delayMs);
+    else add();
+  };
 
-          const currentStep = pkt.steps[pkt.currentStepIndex];
-          if (!currentStep) continue;
+  const resetSimulation = () => updateActive(() => []);
 
-          // Real packet travel time fluctuating based on physical link latency and subnet congestion
-          const stepLatency = currentStep.stepLatencyMs || 2.0;
-          // Normalizes progress increment: 1ms LAN is swift (~0.07), 4ms Wi-Fi is ~0.05, 25ms-50ms congested WAN travels visibly slower (~0.02)
-          const latencyFactor = Math.max(0.45, Math.min(3.5, stepLatency / 3.2));
-          const progressInc = (0.055 / latencyFactor) * speed;
-          const newProgress = pkt.progress + progressInc;
+  // Advance every packet in flight. `increment` = progress per tick, or 'step' to finish the current hop.
+  const advancePackets = (increment: number | 'step') => {
+    const currentNodes = nodesRef.current;
+    const currentLinks = linksRef.current;
+    const next: SimulatedPacket[] = [];
+    const finished = new Map<string, SimulatedPacket['status']>();
+    const droppedAt: string[] = [];
+    const learned: { switchId: string; mac: string; port: string; vlan: number }[] = [];
+    const arpReplies: SimulatedPacket[] = [];
+    let lastFinished: SimulatedPacket | null = null;
+    let hopped = false;
 
-          if (newProgress < 1.0) {
-            nextPackets.push({ ...pkt, progress: newProgress });
-          } else {
-            // Step completed!
-            if (currentStep.isDropped) {
-              // Packet was dropped at this device (e.g. firewall or link down)
-              pkt.status = 'dropped';
-              setHighlightedPacket(pkt);
-              soundFx.playPacketDropped();
-              // Update node stats
-              setNodes((prevNodes) =>
-                prevNodes.map((n) =>
-                  n.id === currentStep.toNodeId
-                    ? {
-                        ...n,
-                        stats: { ...n.stats, packetsDropped: n.stats.packetsDropped + 1 },
-                      }
-                    : n
-                )
-              );
-              continue;
-            }
+    for (const pkt of activeRef.current) {
+      const currentStep = pkt.steps[pkt.currentStepIndex];
+      if (!currentStep) continue;
 
-            // Learn MAC address in intermediate switches
-            const destNodeObj = nodes.find((n) => n.id === currentStep.toNodeId);
-            if (destNodeObj && destNodeObj.type === 'switch') {
-              const srcMac = pkt.layer2.sourceMac;
-              setNodes((prevNodes) =>
-                prevNodes.map((n) => {
-                  if (n.id === destNodeObj.id) {
-                    const currentTable = n.macTable || [];
-                    const exists = currentTable.some((m) => m.mac === srcMac);
-                    if (!exists) {
-                      return {
-                        ...n,
-                        macTable: [
-                          ...currentTable,
-                          {
-                            mac: srcMac,
-                            port: currentStep.fromNodeId.startsWith('pc') ? 'port1' : 'portUplink',
-                            vlan: pkt.layer2.vlanId || 10,
-                            ageSeconds: 1,
-                            type: 'DYNAMIC' as const,
-                          },
-                        ],
-                      };
-                    }
-                  }
-                  return n;
-                })
-              );
-            }
+      // Travel time follows link latency: 1ms LAN is swift, congested WAN visibly slower
+      const stepLatency = currentStep.stepLatencyMs || 2.0;
+      const latencyFactor = Math.max(0.45, Math.min(3.5, stepLatency / 3.2));
+      const newProgress = increment === 'step' ? 1 : pkt.progress + (0.055 / latencyFactor) * increment;
 
-            // Next step or finished?
-            if (pkt.currentStepIndex < pkt.steps.length - 1) {
-              soundFx.playPacketHop();
-              nextPackets.push({
-                ...pkt,
-                currentStepIndex: pkt.currentStepIndex + 1,
-                progress: 0,
-              });
-            } else {
-              // Final Destination reached!
-              pkt.status = 'delivered';
-              setHighlightedPacket(pkt);
-              soundFx.playPacketDelivered();
+      if (newProgress < 1.0) {
+        next.push({ ...pkt, progress: newProgress });
+        continue;
+      }
 
-              // Update ARP table on destination if ARP resolution
-              if (pkt.protocol === 'ARP' && pkt.layer7.payload?.targetIp) {
-                const targetIp = pkt.layer7.payload.targetIp;
-                const senderIp = pkt.layer7.payload.senderIp;
-                const senderMac = pkt.layer7.payload.senderMac;
+      if (currentStep.isDropped) {
+        finished.set(pkt.id, 'dropped');
+        droppedAt.push(currentStep.toNodeId);
+        lastFinished = { ...pkt, status: 'dropped' };
+        continue;
+      }
 
-                setNodes((prevNodes) =>
-                  prevNodes.map((n) => {
-                    if (n.primaryIp === targetIp) {
-                      const currentArp = n.arpTable || [];
-                      if (!currentArp.some((a) => a.ip === senderIp)) {
-                        return {
-                          ...n,
-                          arpTable: [
-                            ...currentArp,
-                            {
-                              ip: senderIp,
-                              mac: senderMac,
-                              interfaceName: 'eth0',
-                              type: 'dynamic',
-                              updatedAt: Date.now(),
-                            },
-                          ],
-                        };
-                      }
-                    }
-                    return n;
-                  })
-                );
-              }
-            }
-          }
+      // MAC learning: the switch records the source MAC of the frame on the ingress port
+      const toNode = currentNodes.find((n) => n.id === currentStep.toNodeId);
+      const fromNode = currentNodes.find((n) => n.id === currentStep.fromNodeId);
+      if (toNode?.type === 'switch' && fromNode) {
+        const port = portTowards(currentLinks, toNode.id, fromNode.id);
+        const routedBefore = pkt.steps.slice(0, pkt.currentStepIndex).some((s) => currentNodes.find((n) => n.id === s.fromNodeId)?.type === 'router');
+        if (port && fromNode.type === 'router') {
+          const routerPort = portTowards(currentLinks, fromNode.id, toNode.id);
+          const mac = fromNode.interfaces.find((i) => i.name === routerPort)?.mac || fromNode.primaryMac;
+          learned.push({ switchId: toNode.id, mac, port, vlan: getZoneVlan(toNode.zone) ?? pkt.layer2.vlanId ?? 1 });
+        } else if (port && !routedBefore) {
+          learned.push({ switchId: toNode.id, mac: pkt.layer2.sourceMac, port, vlan: pkt.layer2.vlanId ?? 1 });
         }
+      }
 
-        return nextPackets;
-      });
-    }, 40);
+      if (pkt.currentStepIndex < pkt.steps.length - 1) {
+        hopped = true;
+        next.push({ ...pkt, currentStepIndex: pkt.currentStepIndex + 1, progress: 0 });
+      } else {
+        finished.set(pkt.id, 'delivered');
+        lastFinished = { ...pkt, status: 'delivered' };
+        if (pkt.protocol === 'ARP' && pkt.layer7.payload?.opcode === 'Reply (2)') arpReplies.push(pkt);
+      }
+    }
 
+    updateActive(() => next);
+    markInHistory(finished);
+    if (lastFinished) setHighlightedPacket(lastFinished);
+
+    if (droppedAt.length) {
+      dropCounterRef.current += droppedAt.length;
+      soundFx.playPacketDropped();
+    } else if ([...finished.values()].includes('delivered')) {
+      soundFx.playPacketDelivered();
+    } else if (hopped) {
+      soundFx.playPacketHop();
+    }
+
+    if (droppedAt.length || learned.length || arpReplies.length) {
+      setNodes((prevNodes) =>
+        prevNodes.map((n) => {
+          let updated = n;
+          const drops = droppedAt.filter((id) => id === n.id).length;
+          if (drops) updated = { ...updated, stats: { ...updated.stats, packetsDropped: updated.stats.packetsDropped + drops } };
+
+          const mine = learned.filter((l) => l.switchId === n.id);
+          if (mine.length) {
+            let table = [...(updated.macTable || [])];
+            for (const l of mine) {
+              const entry = { mac: l.mac, port: l.port, vlan: l.vlan, ageSeconds: 0, type: 'DYNAMIC' as const };
+              table = table.some((m) => m.mac === l.mac) ? table.map((m) => (m.mac === l.mac ? { ...m, ...entry } : m)) : [...table, entry];
+            }
+            updated = { ...updated, macTable: table };
+          }
+
+          // ARP Reply delivered: the requester learns the responder and vice versa
+          for (const rep of arpReplies) {
+            const p = rep.layer7.payload!;
+            const owns = (ip: string) => updated.primaryIp === ip || updated.interfaces.some((i) => i.ip === ip);
+            if (owns(p.targetIp)) updated = { ...updated, arpTable: learnArp(updated.arpTable, p.senderIp, p.senderMac) };
+            if (owns(p.senderIp)) updated = { ...updated, arpTable: learnArp(updated.arpTable, p.targetIp, p.targetMac) };
+          }
+          return updated;
+        })
+      );
+    }
+  };
+
+  // Main Animation Tick for packet flow
+  const hasActivePackets = activePackets.length > 0;
+  useEffect(() => {
+    if (!isPlaying || !hasActivePackets) return;
+    const interval = setInterval(() => advancePackets(speedRef.current), 40);
     return () => clearInterval(interval);
-  }, [isPlaying, speed, activePackets.length, nodes]);
+    // advancePackets only reads refs and stable setters
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, hasActivePackets]);
 
-  // Real-time telemetry sampler for Recharts (every 2.5 seconds)
+  // Real-time telemetry sampler for Recharts (every 2.5 seconds). Reads refs so the timer is not
+  // restarted on every animation frame (which previously stopped it while packets were moving).
   useEffect(() => {
     const timer = setInterval(() => {
       const now = new Date();
       const timeLabel = `${String(now.getMinutes()).padStart(2, '0')}:${String(now.getSeconds()).padStart(2, '0')}`;
+      const currentNodes = nodesRef.current;
+      const th = thresholdsRef.current;
 
       // Calculate recent packet activity
       let aulasTraffic = 0;
       let invitadosTraffic = 0;
       let adminTraffic = 0;
-      let recentErrors = 0;
+      const recentErrors = dropCounterRef.current;
+      dropCounterRef.current = 0;
 
-      activePackets.forEach((p) => {
-        const src = nodes.find((n) => n.id === p.sourceNodeId);
-        if (p.status === 'dropped') recentErrors++;
+      activeRef.current.forEach((p) => {
+        const src = currentNodes.find((n) => n.id === p.sourceNodeId);
         if (src) {
           if (src.zone === 'aula1' || src.zone === 'aula2' || src.zone === 'aula3') aulasTraffic += p.sizeBytes;
           else if (src.zone === 'wifi-guest') invitadosTraffic += p.sizeBytes;
@@ -331,11 +317,11 @@ export default function App() {
       // Update dynamic fluctuating link latencies based on live subnet load
       setLinks((prevLinks) =>
         prevLinks.map((link) => {
-          const fromNode = nodes.find((n) => n.id === link.fromNodeId);
-          const toNode = nodes.find((n) => n.id === link.toNodeId);
+          const fromNode = currentNodes.find((n) => n.id === link.fromNodeId);
+          const toNode = currentNodes.find((n) => n.id === link.toNodeId);
 
           let linkTraffic = aulasTraffic;
-          let threshold = thresholds.aulas;
+          let threshold = th.aulas;
 
           const isGuestLink = fromNode?.zone === 'wifi-guest' || toNode?.zone === 'wifi-guest';
           const isAdminLink =
@@ -346,15 +332,15 @@ export default function App() {
             fromNode?.zone === 'wan' ||
             toNode?.zone === 'wan';
 
-          if (link.id === 'link-trunk-routers') {
+          if (link.id === TRUNK_LINK_ID) {
             linkTraffic = aulasTraffic + adminTraffic + invitadosTraffic;
-            threshold = thresholds.aulas + thresholds.admin;
+            threshold = th.aulas + th.admin;
           } else if (isGuestLink) {
             linkTraffic = invitadosTraffic;
-            threshold = thresholds.invitados;
+            threshold = th.invitados;
           } else if (isAdminLink) {
             linkTraffic = adminTraffic;
-            threshold = thresholds.admin;
+            threshold = th.admin;
           }
 
           const { currentLatency, jitter } = calculateLinkDynamicLatency(link, linkTraffic, threshold);
@@ -383,7 +369,38 @@ export default function App() {
     }, 2500);
 
     return () => clearInterval(timer);
-  }, [activePackets, nodes, thresholds]);
+  }, []);
+
+  // Toggle individual link status (Link Cut / Cable Fault simulation)
+  const handleToggleLink = (linkId: string) => {
+    const link = links.find((l) => l.id === linkId);
+    if (!link) return;
+    const nextStatus = link.status === 'down' ? 'active' : 'down';
+    setLinks((prevLinks) => prevLinks.map((l) => (l.id === linkId ? { ...l, status: nextStatus } : l)));
+
+    if (linkId === TRUNK_LINK_ID) {
+      addTerminalLog(
+        nextStatus === 'active'
+          ? '[TOPOLOGÍA] Enlace Troncal 10G CONECTADO (UP): Routers interconectados (10.0.0.1 <-> 10.0.0.2). Enrutamiento L3 habilitado entre Aulas y Administración.'
+          : '[TOPOLOGÍA] Enlace Troncal DESCONECTADO (DOWN): Redes 100% Independientes. Router Académico y Router Administración operan aislados.',
+        nextStatus === 'active' ? 'success' : 'error'
+      );
+    } else {
+      addTerminalLog(
+        `[FALLO FÍSICO / ENLACE] Enlace ${link.id} (${link.fromPort} ↔ ${link.toPort}): estado cambiado a ${nextStatus.toUpperCase()}. ${
+          nextStatus === 'down'
+            ? '⚠️ Cable desconectado. Las tramas en este tramo se descartarán.'
+            : '✅ Enlace físico restablecido (LINK UP).'
+        }`,
+        nextStatus === 'active' ? 'success' : 'error'
+      );
+    }
+    if (nextStatus === 'down') soundFx.playPacketDropped();
+    else soundFx.playPacketDelivered();
+  };
+
+  // Toggle between Interconnected Routers (Trunk UP) and Independent Networks (Trunk DOWN)
+  const handleToggleRouterMode = () => handleToggleLink(TRUNK_LINK_ID);
 
   // Burst traffic generator for live demonstrations
   const handleGenerateBurst = (type: 'normal' | 'guest_attack' | 'web_surge') => {
@@ -404,8 +421,22 @@ export default function App() {
     }
   };
 
-  // Handle IEEE 802.1Q port VLAN assignment change
-  const handlePortVlanChange = (switchId: string, portName: string, newVlanId: number) => {
+  // Handle IEEE 802.1Q port VLAN assignment change. Returns false if the change is not valid.
+  const handlePortVlanChange = (switchId: string, portName: string, newVlanId: number): boolean => {
+    const sw = nodes.find((n) => n.id === switchId);
+    const port = sw?.interfaces.find((i) => i.name === portName);
+    if (!sw || !port) {
+      addTerminalLog(`[VLAN 802.1Q] El puerto "${portName}" no existe en ${sw?.name || switchId}. Usa "show vlan" para ver los puertos.`, 'error');
+      return false;
+    }
+    if (port.portMode === 'trunk') {
+      addTerminalLog(`[VLAN 802.1Q] ${portName} es un puerto troncal (transporta varias VLAN etiquetadas); solo se puede cambiar la VLAN de los puertos de acceso.`, 'error');
+      return false;
+    }
+    if (!Number.isInteger(newVlanId) || newVlanId < 1 || newVlanId > 4094) {
+      addTerminalLog('[VLAN 802.1Q] El VLAN ID debe ser un número entre 1 y 4094.', 'error');
+      return false;
+    }
     setNodes((prevNodes) =>
       prevNodes.map((n) => {
         if (n.id !== switchId) return n;
@@ -419,10 +450,14 @@ export default function App() {
       })
     );
     addTerminalLog(
-      `[VLAN 802.1Q] Switch ${switchId}: Puerto ${portName} asignado a VLAN ${newVlanId}. Dominio de difusión y segmentación L2 actualizados.`,
+      `[VLAN 802.1Q] Switch ${sw.name}: Puerto ${portName} asignado a VLAN ${newVlanId}. Dominio de difusión y segmentación L2 actualizados.`,
       'success'
     );
+    return true;
   };
+
+  const maskOf = (node: NetworkNode) =>
+    node.interfaces.find((i) => i.ip && i.ip === node.primaryIp)?.subnetMask || '255.255.255.0';
 
   // Command Execution Engine
   const executeCommand = (rawCommand: string, node: NetworkNode) => {
@@ -435,17 +470,27 @@ export default function App() {
     const cmd = parts[0].toLowerCase();
     const args = parts.slice(1);
 
+    // Commands that originate IP traffic need an IP address
+    const requireIp = () => {
+      if (node.primaryIp) return true;
+      addTerminalLog(
+        `${node.name} es un ${node.type === 'switch' ? 'switch L2' : 'dispositivo'} sin dirección IP de gestión: no puede originar "${cmd}". Selecciona un PC, servidor o router.`,
+        'error'
+      );
+      return false;
+    };
+
     // 1. HELP
     if (cmd === 'help') {
       addTerminalLog(
         `Comandos Disponibles en el Simulador:
-  ping <ip|host>         Envía paquetes ICMP Echo Request y calcula RTT.
+  ping [-c N] [-t TTL] <ip|host>  Envía paquetes ICMP Echo Request y calcula RTT.
   traceroute <ip|host>   Traza los routers del camino mostrando cada salto.
   arp -a                 Muestra la tabla de resolución ARP (IP a MAC).
   arp -d                 Limpia la caché ARP del equipo para forzar broadcast.
   ipconfig / ifconfig    Muestra IPs, máscaras, gateways y direcciones MAC.
-  curl <url>             Realiza petición HTTP y muestra el HTML recibido.
-  nslookup <dominio>     Consulta el servidor DNS de la academia (SRV-Campus).
+  curl <url>             Petición HTTP (ej: curl http://campus.academia.edu, curl 192.168.100.20:1521).
+  nslookup <dominio>     Consulta el servidor DNS configurado en el equipo.
   route print / netstat  Muestra la tabla de enrutamiento local o del router.
   mac-table [sw]         Muestra la tabla CAM con VLAN IDs (IEEE 802.1Q).
   show vlan / vlan list  Muestra la configuración de puertos y VLANs del switch.
@@ -470,8 +515,9 @@ export default function App() {
         logText += `No hay reglas ACL configuradas. Tráfico permitido por defecto.`;
       } else {
         rRules.forEach((r) => {
-          logText += `  Sec ${r.sequence || 10}: [${r.enabled ? 'ACTIVA' : 'INACTIVA'}] ${r.action} ${r.protocol} ${r.sourceSubnet} -> ${r.destSubnet}${r.destPort && r.destPort !== 'any' ? ` eq ${r.destPort}` : ''} (${r.description})\n`;
+          logText += `  Sec ${r.sequence || 10}: [${r.enabled ? 'ACTIVA' : 'INACTIVA'}] ${r.action} ${r.protocol} ${r.sourceSubnet} -> ${r.destSubnet}${r.destPort && r.destPort !== 'any' ? ` eq ${r.destPort}` : ''} ${r.interfaceName && r.interfaceName !== 'any' ? `[${r.interfaceName} ${r.direction || 'IN'}] ` : ''}(${r.description})\n`;
         });
+        logText += `  (Sin coincidencia: el simulador PERMITE el tráfico)\n`;
       }
       logText += `\nAbriendo editor interactivo de ACLs...`;
       addTerminalLog(logText, 'info');
@@ -551,8 +597,16 @@ export default function App() {
         node.routingTable.forEach((r) => {
           output += `  ${r.destination.padEnd(20)} ${r.mask.padEnd(16)} ${r.gateway.padEnd(17)} ${r.interfaceName.padEnd(9)} ${r.metric}\n`;
         });
+      } else if (node.primaryIp) {
+        const mask = maskOf(node);
+        const netInt = (ipToInt(node.primaryIp) & ipToInt(mask)) >>> 0;
+        const network = [netInt >>> 24, (netInt >>> 16) & 255, (netInt >>> 8) & 255, netInt & 255].join('.');
+        const iface = node.interfaces[0]?.name || 'eth0';
+        output = `Rutas Activas del Host:\n  Destino de Red   Máscara          Puerta de Enlace  Interfaz  Métrica\n`;
+        if (node.gateway) output += `  ${'0.0.0.0'.padEnd(16)} ${'0.0.0.0'.padEnd(16)} ${node.gateway.padEnd(17)} ${iface.padEnd(9)} 1\n`;
+        output += `  ${network.padEnd(16)} ${mask.padEnd(16)} ${'Enlace local'.padEnd(17)} ${iface.padEnd(9)} 0`;
       } else {
-        output = `Rutas Activas del Host:\n  0.0.0.0          0.0.0.0          ${node.gateway || '192.168.10.1'}     eth0      1\n  ${node.primaryIp?.replace(/\.\d+$/, '.0')}   255.255.255.0    Enlace local      eth0      0`;
+        output = `${node.name} trabaja en Capa 2 y no tiene tabla de rutas IP.`;
       }
       addTerminalLog(output, 'output');
       return;
@@ -566,17 +620,18 @@ export default function App() {
       (cmd === 'show' && (args[0] === 'mac-address-table' || args[0] === 'mac' || args[0] === 'cam'))
     ) {
       let targetSwitch: NetworkNode | undefined = undefined;
+      const swArg = cmd === 'show' ? args[1] : args[0];
 
       if (node.type === 'switch') {
         targetSwitch = node;
-      } else if (args[0] && nodes.find((n) => n.id.toLowerCase() === args[0].toLowerCase() && n.type === 'switch')) {
-        targetSwitch = nodes.find((n) => n.id.toLowerCase() === args[0].toLowerCase() && n.type === 'switch');
+      } else if (swArg && nodes.find((n) => n.id.toLowerCase() === swArg.toLowerCase() && n.type === 'switch')) {
+        targetSwitch = nodes.find((n) => n.id.toLowerCase() === swArg.toLowerCase() && n.type === 'switch');
       } else {
         // If run from a PC/Host, automatically find the local switch connected to this host
         const connectedSwId = node.interfaces?.[0]?.connectedToNodeId;
         targetSwitch = nodes.find((n) => n.id === connectedSwId && n.type === 'switch');
         if (!targetSwitch) {
-          targetSwitch = nodes.find((n) => n.type === 'switch' && n.zone === node.zone) || nodes.find((n) => n.id === 'sw-aula1');
+          targetSwitch = nodes.find((n) => n.type === 'switch' && n.zone === node.zone);
         }
       }
 
@@ -601,7 +656,7 @@ export default function App() {
         output += `(Tabla CAM vacía actualmente. Se poblará dinámicamente con el tráfico).\n`;
       } else {
         targetSwitch.macTable.forEach((m) => {
-          const vlanStr = String(m.vlan ?? 10).padEnd(7);
+          const vlanStr = String(m.vlan ?? 1).padEnd(7);
           const macStr = m.mac.padEnd(20);
           const portStr = m.port.padEnd(15);
           const typeStr = (m.type || 'DYNAMIC').padEnd(11);
@@ -617,36 +672,24 @@ export default function App() {
 
     // 6b. SHOW VLAN / VLAN LIST / VLAN SET (IEEE 802.1Q Configuration)
     if (cmd === 'vlan' || (cmd === 'show' && (args[0] === 'vlan' || args[0] === 'vlans'))) {
+      const targetSw =
+        node.type === 'switch'
+          ? node
+          : nodes.find((n) => n.id === node.interfaces?.[0]?.connectedToNodeId && n.type === 'switch');
+
+      if (!targetSw) {
+        addTerminalLog(`${node.name} no está conectado a ningún switch gestionable. Selecciona un switch o un PC cableado.`, 'error');
+        return;
+      }
+
       if (args[0] === 'set' || args[1] === 'set') {
         const portArg = args[0] === 'set' ? args[1] : args[2];
-        const vlanArg = args[0] === 'set' ? parseInt(args[2], 10) : parseInt(args[3], 10);
-
-        let targetSw =
-          node.type === 'switch'
-            ? node
-            : nodes.find((n) => n.id === node.interfaces?.[0]?.connectedToNodeId && n.type === 'switch') ||
-              nodes.find((n) => n.id === 'sw-aula1');
-
-        if (!targetSw) {
-          addTerminalLog('Switch no encontrado para configurar VLAN.', 'error');
-          return;
-        }
-        if (!portArg || isNaN(vlanArg)) {
+        const vlanArg = args[0] === 'set' ? Number(args[2]) : Number(args[3]);
+        if (!portArg || !Number.isFinite(vlanArg)) {
           addTerminalLog('Uso: vlan set <puerto> <vlan_id>  (ejemplo: vlan set port3 99)', 'error');
           return;
         }
         handlePortVlanChange(targetSw.id, portArg, vlanArg);
-        return;
-      }
-
-      let targetSw =
-        node.type === 'switch'
-          ? node
-          : nodes.find((n) => n.id === node.interfaces?.[0]?.connectedToNodeId && n.type === 'switch') ||
-            nodes.find((n) => n.id === 'sw-aula1');
-
-      if (!targetSw) {
-        addTerminalLog('Switch no encontrado.', 'error');
         return;
       }
 
@@ -656,9 +699,9 @@ export default function App() {
       targetSw.interfaces.forEach((iface) => {
         const portStr = iface.name.padEnd(15);
         const modeStr = (iface.portMode === 'trunk' ? 'TRUNK' : 'ACCESS').padEnd(11);
-        const vlanStr = (iface.portMode === 'trunk' ? (iface.allowedVlans?.join(',') || 'ALL') : String(iface.vlanId || 10)).padEnd(10);
+        const vlanStr = (iface.portMode === 'trunk' ? (iface.allowedVlans?.join(',') || 'ALL') : String(iface.vlanId || 1)).padEnd(10);
         const connectedNode = nodes.find((n) =>
-          n.interfaces?.some((i) => i.connectedToNodeId === targetSw?.id && i.connectedToInterface === iface.name)
+          n.interfaces?.some((i) => i.connectedToNodeId === targetSw.id && i.connectedToInterface === iface.name)
         );
         const devStr = (connectedNode ? `${connectedNode.name} (${connectedNode.label})` : 'Enlace Troncal Router').padEnd(27);
         output += `${portStr} ${modeStr} ${vlanStr} ${devStr} Activo\n`;
@@ -666,7 +709,7 @@ export default function App() {
       output += `-------------------------------------------------------------------------\n`;
       output += `Segmentación Lógica en el mismo hardware:\n`;
       output += `  Para aislar un equipo en otra VLAN: vlan set <puerto> <vlan_id>\n`;
-      output += `  Ejemplo: "vlan set port3 99" -> PC-103 quedará en VLAN 99 y no podrá comunicarse en L2 con PC-101.`;
+      output += `  Ejemplo: "vlan set port3 99" -> el equipo de port3 quedará en la VLAN 99 sin conectividad L2 con el resto ni salida por su gateway.`;
       addTerminalLog(output, 'output');
       return;
     }
@@ -677,34 +720,27 @@ export default function App() {
         addTerminalLog('Uso: nslookup <nombre-de-dominio> (ej: nslookup campus.academia.edu)', 'error');
         return;
       }
+      if (!requireIp()) return;
       const domain = args[0];
-      const { queryPacket, responsePacket, resolvedIp } = createDnsSimulation(
-        node,
-        domain,
-        nodes,
-        links
-      );
+      const res = createDnsSimulation(node, domain, nodes, links);
+      enqueuePacket(res.queryPacket);
+      if (res.responsePacket) enqueuePacket(res.responsePacket, 1200);
 
-      // Enqueue packets
-      setActivePackets((prev) => [...prev, queryPacket]);
-      setPacketHistory((prev) => [queryPacket, ...prev]);
-
-      if (responsePacket) {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, responsePacket]);
-          setPacketHistory((prev) => [responsePacket, ...prev]);
-        }, 1200);
-      }
-
-      addTerminalLog(
-        `Servidor DNS:  ${node.dnsServer || '192.168.200.50'}
-Address:       ${node.dnsServer || '192.168.200.50'}#53
-
-Respuesta no autoritativa:
-Nombre:  ${domain}
-Address: ${resolvedIp || 'No resuelto'}`,
-        'output'
-      );
+      setTimeout(() => {
+        if (res.outcome === 'timeout') {
+          addTerminalLog(
+            `;; connection timed out; no servers could be reached${res.dropReason ? `\n   Motivo: ${res.dropReason}` : ''}`,
+            'error'
+          );
+          return;
+        }
+        const header = `Servidor DNS:  ${res.serverIp}\nAddress:       ${res.serverIp}#53\n\n`;
+        if (res.outcome === 'nxdomain') {
+          addTerminalLog(`${header}** server can't find ${domain}: NXDOMAIN`, 'error');
+        } else {
+          addTerminalLog(`${header}Nombre:  ${domain}\nAddress: ${res.resolvedIp}`, 'output');
+        }
+      }, res.responsePacket ? 2000 : 1500);
       return;
     }
 
@@ -714,44 +750,64 @@ Address: ${resolvedIp || 'No resuelto'}`,
         addTerminalLog('Uso: curl <url> (ej: curl http://campus.academia.edu)', 'error');
         return;
       }
-      const rawUrl = args[0].replace(/^https?:\/\//, '');
-      const partsUrl = rawUrl.split('/');
-      const host = partsUrl[0];
-      const path = '/' + partsUrl.slice(1).join('/');
+      if (!requireIp()) return;
+      const url = args.find((a) => !a.startsWith('-')) || args[0];
+      const m = url.match(/^(?:(https?):\/\/)?([^/:]+)(?::(\d{1,5}))?(\/.*)?$/i);
+      if (!m) {
+        addTerminalLog(`curl: (3) URL rejected: Malformed input to a URL function`, 'error');
+        return;
+      }
+      const scheme = (m[1] || 'http').toLowerCase();
+      const host = m[2];
+      const port = m[3] ? Number(m[3]) : scheme === 'https' ? 443 : 80;
+      const path = m[4] || '/';
 
-      const targetInfo = resolveTarget(host, nodes);
-      if (!targetInfo.node) {
-        addTerminalLog(`curl: (6) Could not resolve host: ${host}`, 'error');
+      const runHttp = (destIp: string) => {
+        const destNode = resolveTarget(destIp, nodesRef.current).node;
+        if (!destNode) {
+          addTerminalLog(`curl: (28) Failed to connect to ${host} port ${port}: Timed out (${destIp} no existe en la simulación)`, 'error');
+          return;
+        }
+        const res = createHttpSimulation(node, destNode, path, nodesRef.current, linksRef.current, port, destIp);
+        res.packets.forEach((p, index) => enqueuePacket(p, index * 600));
+        setTimeout(() => {
+          if (res.outcome === 'ok') {
+            if (scheme === 'https') addTerminalLog('(TLS no se simula: se muestra el contenido descifrado)', 'info');
+            addTerminalLog(res.html || '', 'success');
+          } else if (res.outcome === 'refused') {
+            addTerminalLog(`curl: (7) Failed to connect to ${host} port ${port}: Connection refused (${destNode.name} responde con TCP RST: no hay ningún servicio en ese puerto)`, 'error');
+          } else if (res.outcome === 'not-http') {
+            addTerminalLog(`curl: (52) Empty reply from server (el puerto ${port} está abierto pero el servicio no habla HTTP)`, 'error');
+          } else {
+            addTerminalLog(`curl: (28) Failed to connect to ${host} port ${port}: Timed out${res.dropReason ? `\n   Motivo: ${res.dropReason}` : ''}`, 'error');
+          }
+        }, res.packets.length * 600 + 900);
+      };
+
+      // Hostnames with a domain go through the host's DNS resolver first
+      if (!isValidIpv4(host) && host.includes('.')) {
+        const dns = createDnsSimulation(node, host, nodes, links);
+        enqueuePacket(dns.queryPacket);
+        if (dns.responsePacket) enqueuePacket(dns.responsePacket, 900);
+        setTimeout(() => {
+          if (dns.outcome !== 'ok' || !dns.resolvedIp) {
+            addTerminalLog(
+              `curl: (6) Could not resolve host: ${host}${dns.outcome === 'nxdomain' ? ` (el DNS ${dns.serverIp} responde NXDOMAIN)` : dns.dropReason ? `\n   Motivo: ${dns.dropReason}` : ''}`,
+              'error'
+            );
+            return;
+          }
+          runHttp(dns.resolvedIp);
+        }, 1500);
         return;
       }
 
-      const packets = createHttpSimulation(node, targetInfo.node, path, nodes, links);
-      packets.forEach((p, index) => {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, p]);
-          setPacketHistory((prev) => [p, ...prev]);
-        }, index * 800);
-      });
-
-      setTimeout(() => {
-        if (packets.some((p) => p.status === 'dropped')) {
-          addTerminalLog(`curl: (7) Failed to connect to ${host}: Conexión rechazada o bloqueada por firewall`, 'error');
-        } else {
-          addTerminalLog(
-            `<!DOCTYPE html>
-<html>
-<head>
-  <title>Campus Virtual Academia</title>
-</head>
-<body>
-  <h1>Bienvenido a la Academia Digital</h1>
-  <p>Acceso a cursos de Redes, Ciberseguridad y Desarrollo.</p>
-</body>
-</html>`,
-            'success'
-          );
-        }
-      }, 2200);
+      const target = resolveTarget(host, nodes);
+      if (!target.node && !isValidIpv4(target.ip)) {
+        addTerminalLog(`curl: (6) Could not resolve host: ${host}`, 'error');
+        return;
+      }
+      runHttp(target.ip);
       return;
     }
 
@@ -761,33 +817,34 @@ Address: ${resolvedIp || 'No resuelto'}`,
         addTerminalLog('Uso: traceroute <ip|nombre> (ej: traceroute 192.168.100.20)', 'error');
         return;
       }
-      const target = args[0];
+      if (!requireIp()) return;
+      const target = args[args.length - 1];
       const targetInfo = resolveTarget(target, nodes);
 
       if (!targetInfo.node) {
-        addTerminalLog(`traceroute: No se pudo resolver la ruta hacia ${target}`, 'error');
+        addTerminalLog(
+          isValidIpv4(targetInfo.ip)
+            ? `traceroute: ${targetInfo.ip} no pertenece a ningún equipo de la topología simulada`
+            : `traceroute: ${target}: Nombre o servicio desconocido`,
+          'error'
+        );
         return;
       }
 
-      const packets = createTracerouteSimulation(node, targetInfo.node, nodes, links);
-      packets.forEach((p, index) => {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, p]);
-          setPacketHistory((prev) => [p, ...prev]);
-        }, index * 700);
-      });
+      const { packets, hops } = createTracerouteSimulation(node, targetInfo.node, nodes, links, targetInfo.ip);
+      addTerminalLog(`traceroute to ${target} (${targetInfo.ip}), 30 hops max, 60 byte packets`, 'info');
+      packets.forEach((p, index) => enqueuePacket(p, index * 700));
 
-      addTerminalLog(`traceroute to ${target} (${targetInfo.node.primaryIp || target}), 30 hops max, 60 byte packets`, 'info');
-
-      // Output hops in sequence
-      packets.forEach((p, index) => {
+      hops.forEach((h, index) => {
         setTimeout(() => {
-          const hopNode = nodes.find((n) => n.id === p.destNodeId);
-          const rtt = (1.8 + Math.random() * 2).toFixed(2);
-          addTerminalLog(
-            ` ${index + 1}  ${hopNode?.hostname || hopNode?.name || p.destNodeId} (${hopNode?.primaryIp || ''})  ${rtt} ms  ${(parseFloat(rtt) + 0.3).toFixed(2)} ms`,
-            'output'
-          );
+          if (h.rttMs === null) {
+            addTerminalLog(` ${h.ttl}  * * *${h.note ? `\n    (sin respuesta: ${h.note})` : ''}`, 'error');
+            return;
+          }
+          const a = h.rttMs;
+          const b = a + Math.random() * 0.4;
+          const c = a + Math.random() * 0.4;
+          addTerminalLog(` ${h.ttl}  ${h.name} (${h.ip})  ${a.toFixed(3)} ms  ${b.toFixed(3)} ms  ${c.toFixed(3)} ms`, 'output');
         }, (index + 1) * 700);
       });
       return;
@@ -795,92 +852,95 @@ Address: ${resolvedIp || 'No resuelto'}`,
 
     // 10. PING
     if (cmd === 'ping') {
-      if (!args[0]) {
-        addTerminalLog('Uso: ping <ip|nombre> (ej: ping 192.168.10.12 o ping campus.academia.edu)', 'error');
+      let count = 4;
+      let ttl = 64;
+      let target = '';
+      for (let i = 0; i < args.length; i++) {
+        if ((args[i] === '-c' || args[i] === '-n') && args[i + 1]) count = Number(args[++i]);
+        else if ((args[i] === '-t' || args[i] === '-i') && args[i + 1]) ttl = Number(args[++i]);
+        else if (!args[i].startsWith('-')) target = args[i];
+      }
+      if (!target) {
+        addTerminalLog('Uso: ping [-c N] [-t TTL] <ip|nombre> (ej: ping 192.168.10.12 o ping -t 1 192.168.200.50)', 'error');
         return;
       }
-      const target = args[0];
+      if (!Number.isInteger(count) || count < 1 || count > 10) {
+        addTerminalLog('ping: el número de paquetes (-c) debe estar entre 1 y 10 en el simulador.', 'error');
+        return;
+      }
+      if (!Number.isInteger(ttl) || ttl < 1 || ttl > 255) {
+        addTerminalLog('ping: el TTL (-t) debe estar entre 1 y 255.', 'error');
+        return;
+      }
+      if (!requireIp()) return;
+
       const targetInfo = resolveTarget(target, nodes);
       const targetNode = targetInfo.node;
+      const destIp = targetInfo.ip;
+      if (!targetNode && !isValidIpv4(destIp)) {
+        addTerminalLog(`ping: ${target}: Nombre o servicio desconocido`, 'error');
+        return;
+      }
 
-      addTerminalLog(`PING ${target} (${targetNode?.primaryIp || target}) 56(84) bytes de datos.`, 'info');
+      addTerminalLog(`PING ${target} (${destIp}) 56(84) bytes de datos.`, 'info');
 
-      // Check if ARP resolution is needed first (if local subnet and not in source ARP table)
-      const needArp =
-        targetNode &&
-        isSameSubnet(node.primaryIp || '', targetNode.primaryIp || '') &&
-        !node.arpTable?.some((a) => a.ip === targetNode.primaryIp);
-
-      if (needArp && targetNode) {
-        const { arpBroadcast, arpReply } = createArpResolution(node, targetNode.primaryIp || '', nodes, links);
-        setActivePackets((prev) => [...prev, arpBroadcast]);
-        setPacketHistory((prev) => [arpBroadcast, ...prev]);
-        if (arpReply) {
-          setTimeout(() => {
-            setActivePackets((prev) => [...prev, arpReply]);
-            setPacketHistory((prev) => [arpReply, ...prev]);
-          }, 600);
+      const printStats = (rtts: (number | null)[]) => {
+        const ok = rtts.filter((r): r is number => r !== null);
+        const loss = Math.round(((rtts.length - ok.length) / rtts.length) * 100);
+        let text = `--- ${target} ping statistics ---\n${rtts.length} paquetes transmitidos, ${ok.length} recibidos, ${loss}% packet loss`;
+        if (ok.length) {
+          const avg = ok.reduce((a, b) => a + b, 0) / ok.length;
+          const mdev = Math.sqrt(ok.reduce((a, b) => a + (b - avg) ** 2, 0) / ok.length);
+          text += `\nrtt min/avg/max/mdev = ${Math.min(...ok).toFixed(3)}/${avg.toFixed(3)}/${Math.max(...ok).toFixed(3)}/${mdev.toFixed(3)} ms`;
         }
+        addTerminalLog(text, ok.length === rtts.length ? 'info' : 'error');
+      };
+
+      // Loopback / own address: answered by the local IP stack, nothing leaves the NIC
+      if (destIp.startsWith('127.') || targetNode?.id === node.id) {
+        const rtts: number[] = [];
+        for (let seq = 1; seq <= count; seq++) {
+          const rtt = Number((0.03 + Math.random() * 0.03).toFixed(3));
+          rtts.push(rtt);
+          addTerminalLog(`64 bytes from ${destIp}: icmp_seq=${seq} ttl=64 time=${rtt} ms`, 'success');
+        }
+        printStats(rtts);
+        return;
+      }
+
+      // ARP first if the next hop (destination or gateway) is not cached
+      const isLocal = isSameSubnet(node.primaryIp || '', destIp, maskOf(node));
+      const arpIp = isLocal ? destIp : node.gateway || '';
+      const needArp = !!arpIp && !node.arpTable?.some((a) => a.ip === arpIp);
+      if (needArp) {
+        const { arpBroadcast, arpReply } = createArpResolution(node, arpIp, nodes, links);
+        enqueuePacket(arpBroadcast);
+        if (arpReply) enqueuePacket(arpReply, 600);
       }
 
       // Update dynamic CAM tables on connected switches with 802.1Q VLAN entries
       setNodes((prev) => updateSwitchMacTables(prev, node, targetNode));
 
-      // Generate sequence of 4 ping echo requests with real fluctuating latency
-      const pingRtts: number[] = [];
-      let droppedCount = 0;
-
-      for (let seq = 1; seq <= 4; seq++) {
+      const results: (number | null)[] = [];
+      for (let seq = 1; seq <= count; seq++) {
         setTimeout(() => {
-          const { requestPacket, replyPacket, logMessage, rtt } = createPingSimulation(
-            node,
-            targetNode?.primaryIp || target,
-            nodes,
-            links,
-            seq
-          );
+          // Read the topology at send time: cutting a cable mid-ping affects the next packets
+          const res = createPingSimulation(node, destIp, nodesRef.current, linksRef.current, seq, ttl);
+          enqueuePacket(res.requestPacket);
 
-          setActivePackets((prev) => [...prev, requestPacket]);
-          setPacketHistory((prev) => [requestPacket, ...prev]);
+          const finish = () => {
+            addTerminalLog(res.logMessage, res.outcome === 'reply' ? 'success' : 'error');
+            results.push(res.outcome === 'reply' ? res.rtt : null);
+            if (results.length === count) setTimeout(() => printStats(results), 400);
+          };
 
-          if (replyPacket) {
+          if (res.replyPacket) {
             setTimeout(() => {
-              setActivePackets((prev) => [...prev, replyPacket]);
-              setPacketHistory((prev) => [replyPacket, ...prev]);
-              pingRtts.push(rtt);
-              addTerminalLog(logMessage, 'success');
-
-              if (seq === 4) {
-                setTimeout(() => {
-                  if (pingRtts.length > 0) {
-                    const min = Math.min(...pingRtts).toFixed(1);
-                    const max = Math.max(...pingRtts).toFixed(1);
-                    const avg = (pingRtts.reduce((a, b) => a + b, 0) / pingRtts.length).toFixed(1);
-                    const mdev = (Math.abs(Number(max) - Number(min)) / 2).toFixed(1);
-                    const loss = Math.round((droppedCount / 4) * 100);
-                    addTerminalLog(
-                      `--- ${target} ping statistics ---
-4 paquetes transmitidos, ${pingRtts.length} recibidos, ${loss}% packet loss, tiempo total ~3200ms
-rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica por carga)`,
-                      'info'
-                    );
-                  }
-                }, 500);
-              }
+              enqueuePacket(res.replyPacket!);
+              finish();
             }, 550);
           } else {
-            droppedCount++;
-            addTerminalLog(logMessage, 'error');
-
-            if (seq === 4) {
-              setTimeout(() => {
-                addTerminalLog(
-                  `--- ${target} ping statistics ---
-4 paquetes transmitidos, 0 recibidos, 100% packet loss (destino inaccesible / filtrado por ACL)`,
-                  'error'
-                );
-              }, 500);
-            }
+            finish();
           }
         }, (seq - 1) * 850 + (needArp ? 700 : 0));
       }
@@ -918,87 +978,46 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
   }) => {
     const srcNode = nodes.find((n) => n.id === config.sourceNodeId);
     const dstNode = nodes.find((n) => n.id === config.targetNodeId);
-    if (!srcNode || !dstNode) return;
+    if (!srcNode || !dstNode || srcNode.id === dstNode.id) return;
 
     if (config.protocol === 'ICMP') {
-      const { requestPacket, replyPacket } = createPingSimulation(
-        srcNode,
-        dstNode.primaryIp || dstNode.name,
-        nodes,
-        links,
-        1
-      );
-      requestPacket.layer3.ttl = config.ttl;
+      const res = createPingSimulation(srcNode, dstNode.primaryIp || dstNode.name, nodes, links, 1, config.ttl);
       if (config.payloadText) {
-        requestPacket.layer7.message = config.payloadText;
+        res.requestPacket.layer7 = { ...res.requestPacket.layer7, payload: { data: config.payloadText } };
       }
-      setActivePackets((prev) => [...prev, requestPacket]);
-      setPacketHistory((prev) => [requestPacket, ...prev]);
-
-      if (config.ttl > 2 && replyPacket) {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, replyPacket]);
-          setPacketHistory((prev) => [replyPacket, ...prev]);
-        }, 1200);
-      }
+      enqueuePacket(res.requestPacket);
+      if (res.replyPacket) enqueuePacket(res.replyPacket, 1200);
       addTerminalLog(
         `[INSPECTOR PDU] Paquete ICMP Echo inyectado desde ${srcNode.name} hacia ${dstNode.name} con TTL=${config.ttl}.`,
         'info'
       );
+      setTimeout(() => addTerminalLog(`[INSPECTOR PDU] ${res.logMessage}`, res.outcome === 'reply' ? 'success' : 'error'), 1300);
     } else if (config.protocol === 'DNS') {
-      const { queryPacket, responsePacket } = createDnsSimulation(
-        srcNode,
-        'campus.academia.edu',
-        nodes,
-        links
-      );
-      setActivePackets((prev) => [...prev, queryPacket]);
-      setPacketHistory((prev) => [queryPacket, ...prev]);
-      if (responsePacket) {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, responsePacket]);
-          setPacketHistory((prev) => [responsePacket, ...prev]);
-        }, 1200);
-      }
+      const res = createDnsSimulation(srcNode, 'campus.academia.edu', nodes, links);
+      enqueuePacket(res.queryPacket);
+      if (res.responsePacket) enqueuePacket(res.responsePacket, 1200);
       addTerminalLog(
-        `[INSPECTOR PDU] Consulta DNS (UDP/53) inyectada desde ${srcNode.name}.`,
+        `[INSPECTOR PDU] Consulta DNS (UDP/53) inyectada desde ${srcNode.name} hacia su resolver ${res.serverIp}.`,
         'info'
       );
     } else if (config.protocol === 'HTTP') {
-      const packets = createHttpSimulation(srcNode, dstNode, '/', nodes, links);
-      packets.forEach((p, idx) => {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, p]);
-          setPacketHistory((prev) => [p, ...prev]);
-        }, idx * 800);
-      });
+      const res = createHttpSimulation(srcNode, dstNode, '/', nodes, links);
+      res.packets.forEach((p, idx) => enqueuePacket(p, idx * 600));
       addTerminalLog(
-        `[INSPECTOR PDU] Secuencia HTTP GET inyectada desde ${srcNode.name} hacia ${dstNode.name}.`,
+        `[INSPECTOR PDU] Sesión TCP/HTTP inyectada desde ${srcNode.name} hacia ${dstNode.name}:80.`,
         'info'
       );
     } else if (config.protocol === 'ARP') {
-      const { arpBroadcast, arpReply } = createArpResolution(
-        srcNode,
-        dstNode.primaryIp || '',
-        nodes,
-        links
-      );
-      setActivePackets((prev) => [...prev, arpBroadcast]);
-      setPacketHistory((prev) => [arpBroadcast, ...prev]);
-      if (arpReply) {
-        setTimeout(() => {
-          setActivePackets((prev) => [...prev, arpReply]);
-          setPacketHistory((prev) => [arpReply, ...prev]);
-        }, 800);
-      }
+      const { arpBroadcast, arpReply } = createArpResolution(srcNode, dstNode.primaryIp || '', nodes, links);
+      enqueuePacket(arpBroadcast);
+      if (arpReply) enqueuePacket(arpReply, 800);
       addTerminalLog(
-        `[INSPECTOR PDU] Difusión ARP Request L2 (Who has ${dstNode.primaryIp}?) inyectada desde ${srcNode.name}.`,
+        `[INSPECTOR PDU] Difusión ARP Request L2 (Who has ${dstNode.primaryIp}?) inyectada desde ${srcNode.name}.${arpReply ? '' : ' Nadie de su dominio de difusión tiene esa IP: no habrá respuesta.'}`,
         'info'
       );
     }
   };
 
-  // Toggle firewall rule in router
   // Toggle firewall rule in router
   const handleToggleFirewallRule = (nodeId: string, ruleId: string) => {
     setNodes((prevNodes) =>
@@ -1043,7 +1062,7 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
   // Export current network configuration to a downloadable JSON file
   const handleExportLab = () => {
     const labData = {
-      version: '1.0',
+      version: '1.1',
       title: 'Topología de Red Personalizada',
       exportedAt: new Date().toISOString(),
       author: 'Un Fantasma en el Sistema',
@@ -1084,31 +1103,58 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
         const content = event.target?.result as string;
         const parsed = JSON.parse(content);
 
-        if (!parsed || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.links)) {
+        if (!parsed || !Array.isArray(parsed.nodes) || !Array.isArray(parsed.links) || parsed.nodes.length === 0) {
           throw new Error('El archivo JSON no contiene las listas válidas de nodos y enlaces.');
         }
 
-        const isValid = parsed.nodes.every((n: any) => n.id && n.name && n.type && n.interfaces);
+        const validTypes = ['pc', 'switch', 'router', 'ap', 'server', 'mobile', 'cloud'];
+        const isValid = parsed.nodes.every(
+          (n: any) =>
+            typeof n?.id === 'string' &&
+            typeof n.name === 'string' &&
+            validTypes.includes(n.type) &&
+            Array.isArray(n.interfaces) &&
+            typeof n.x === 'number' &&
+            typeof n.y === 'number'
+        );
         if (!isValid) {
           throw new Error('Estructura de dispositivos inválida o incompleta.');
         }
-
-        setNodes(parsed.nodes);
-        setLinks(parsed.links);
-        if (parsed.routerMode === 'interconnected' || parsed.routerMode === 'independent') {
-          setRouterMode(parsed.routerMode);
+        const ids = new Set(parsed.nodes.map((n: any) => n.id));
+        const linksValid = parsed.links.every(
+          (l: any) => typeof l?.id === 'string' && ids.has(l.fromNodeId) && ids.has(l.toNodeId)
+        );
+        if (!linksValid) {
+          throw new Error('Hay enlaces que apuntan a dispositivos que no existen.');
         }
+
+        // Fill optional fields older exports may lack
+        const importedNodes: NetworkNode[] = parsed.nodes.map((n: any) => ({
+          ...n,
+          label: n.label || n.name,
+          zone: n.zone || 'core-academic',
+          primaryMac: n.primaryMac || n.interfaces[0]?.mac || '00:00:00:00:00:00',
+          isOnline: n.isOnline !== false,
+          stats: n.stats || { packetsSent: 0, packetsReceived: 0, packetsDropped: 0 },
+        }));
+        const importedLinks: NetworkLink[] = parsed.links.map((l: any) => ({
+          ...l,
+          status: l.status === 'down' || l.status === 'degraded' ? l.status : 'active',
+          latency: typeof l.latency === 'number' ? l.latency : 1,
+        }));
+
+        setNodes(importedNodes);
+        setLinks(importedLinks);
         if (parsed.thresholds && typeof parsed.thresholds.aulas === 'number') {
           setThresholds(parsed.thresholds);
         }
 
-        setActivePackets([]);
-        if (parsed.nodes[0]) {
-          setSelectedNodeId(parsed.nodes[0].id);
-        }
+        resetSimulation();
+        setHighlightedPacket(null);
+        setSelectedNodeId(importedNodes[0].id);
 
         addTerminalLog(
-          `[IMPORTACIÓN JSON] Topología "${parsed.title || file.name}" cargada con éxito (${parsed.nodes.length} nodos, ${parsed.links.length} enlaces).`,
+          `[IMPORTACIÓN JSON] Topología "${parsed.title || file.name}" cargada con éxito (${importedNodes.length} nodos, ${importedLinks.length} enlaces).`,
           'success'
         );
         soundFx.playPacketDelivered();
@@ -1152,20 +1198,11 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
         onTogglePlay={() => setIsPlaying(!isPlaying)}
         onStepForward={() => {
           setIsPlaying(false);
-          setActivePackets((prev) =>
-            prev.map((p) => {
-              const currentStep = p.steps[p.currentStepIndex];
-              if (!currentStep) return p;
-              if (p.currentStepIndex < p.steps.length - 1) {
-                return { ...p, currentStepIndex: p.currentStepIndex + 1, progress: 0 };
-              }
-              return { ...p, progress: 1 };
-            })
-          );
+          advancePackets('step');
         }}
         speed={speed}
         onChangeSpeed={setSpeed}
-        onResetSimulation={() => setActivePackets([])}
+        onResetSimulation={resetSimulation}
         activePacketCount={activePackets.length}
         totalDevicesCount={nodes.length}
         routerMode={routerMode}
@@ -1303,7 +1340,7 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
           title="Visitar Un Fantasma en el Sistema"
         >
           <img
-            src="/assets/aistudio/icono_81a3db5b.png"
+            src={LOGO_URL}
             alt="Logo Un Fantasma en el Sistema"
             className="w-5 h-5 aspect-square object-contain shrink-0 group-hover:scale-110 transition-transform"
           />
@@ -1317,7 +1354,7 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
         </a>
 
         <div className="flex items-center gap-3 text-[11px] text-slate-500">
-          <span className="hidden md:inline">Simulador de Redes Educativo · IEEE 802.1Q · OSPF/Enrutamiento · Latencia Dinámica</span>
+          <span className="hidden md:inline">Simulador de Redes Educativo · IEEE 802.1Q · Enrutamiento estático · ACLs · Latencia Dinámica</span>
           <a
             href="https://www.unfantasmaenelsistema.com/"
             target="_blank"
@@ -1378,6 +1415,7 @@ rtt min/avg/max/mdev = ${min}/${avg}/${max}/${mdev} ms (fluctuación dinámica p
         isOpen={isAclModalOpen}
         onClose={() => setIsAclModalOpen(false)}
         nodes={nodes}
+        links={links}
         selectedRouterId={selectedAclRouterId}
         onUpdateRouterRules={handleUpdateRouterRules}
       />

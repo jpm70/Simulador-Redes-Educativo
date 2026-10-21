@@ -25,20 +25,27 @@ export const PacketBuilderModal: React.FC<PacketBuilderProps> = ({
   const eligibleTargets = nodes.filter((n) => n.type === 'pc' || n.type === 'mobile' || n.type === 'server' || n.type === 'router');
 
   const [sourceId, setSourceId] = useState<string>(eligibleSources[0]?.id || 'pc-101');
-  const [targetId, setTargetId] = useState<string>(eligibleTargets.find((n) => n.id !== sourceId)?.id || 'srv-web');
+  const [targetId, setTargetId] = useState<string>(eligibleTargets.find((n) => n.id !== sourceId)?.id || '');
   const [protocol, setProtocol] = useState<ProtocolType>('ICMP');
   const [ttl, setTtl] = useState<number>(64);
   const [payloadText, setPayloadText] = useState<string>('Test Packet PDU');
 
   if (!isOpen) return null;
 
+  // The target list hides the source: if both match, fall back to the first visible target
+  const effectiveTargetId =
+    targetId !== sourceId && eligibleTargets.some((n) => n.id === targetId)
+      ? targetId
+      : eligibleTargets.find((n) => n.id !== sourceId)?.id || '';
+
   const sourceNode = nodes.find((n) => n.id === sourceId);
-  const targetNode = nodes.find((n) => n.id === targetId);
+  const targetNode = nodes.find((n) => n.id === effectiveTargetId);
 
   const handleSend = () => {
+    if (!effectiveTargetId) return;
     onSendCustomPacket({
       sourceNodeId: sourceId,
-      targetNodeId: targetId,
+      targetNodeId: effectiveTargetId,
       protocol,
       ttl,
       payloadText,
@@ -108,7 +115,7 @@ export const PacketBuilderModal: React.FC<PacketBuilderProps> = ({
                 2. Dispositivo Destino (Receptor):
               </label>
               <select
-                value={targetId}
+                value={effectiveTargetId}
                 onChange={(e) => setTargetId(e.target.value)}
                 className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs font-mono text-emerald-400 focus:outline-none focus:border-emerald-500"
               >
@@ -186,7 +193,7 @@ export const PacketBuilderModal: React.FC<PacketBuilderProps> = ({
               <div className="flex items-center gap-2 text-xs text-amber-300 bg-amber-950/40 p-2.5 rounded border border-amber-800/60">
                 <AlertTriangle size={15} className="shrink-0" />
                 <span>
-                  <strong>¡Experimento de Red!</strong> Con TTL={ttl}, si el paquete atraviesa routers L3, el TTL llegará a 0 y se generará un mensaje <em>ICMP Time Exceeded (Cód. 11)</em> como en Traceroute.
+                  <strong>¡Experimento de Red!</strong> Con TTL={ttl}, si el paquete atraviesa routers L3, el TTL llegará a 0 y se generará un mensaje <em>ICMP Time Exceeded (tipo 11)</em> como en Traceroute.
                 </span>
               </div>
             )}

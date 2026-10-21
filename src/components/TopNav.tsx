@@ -56,7 +56,7 @@ export const TopNav: React.FC<TopNavProps> = ({
           title="Visitar Un Fantasma en el Sistema (https://www.unfantasmaenelsistema.com/)"
         >
           <img
-            src="/assets/aistudio/icono_81a3db5b.png"
+            src={`${import.meta.env.BASE_URL}assets/aistudio/icono_81a3db5b.png`}
             alt="Logo Un Fantasma en el Sistema"
             className="w-8 h-8 aspect-square object-contain shrink-0 group-hover:scale-105 transition-transform"
           />
@@ -210,7 +210,7 @@ export const TopNav: React.FC<TopNavProps> = ({
           title="Abrir web www.unfantasmaenelsistema.com"
         >
           <img
-            src="/assets/aistudio/icono_81a3db5b.png"
+            src={`${import.meta.env.BASE_URL}assets/aistudio/icono_81a3db5b.png`}
             alt="Logo"
             className="w-4 h-4 aspect-square object-contain shrink-0"
           />

@@ -22,13 +22,22 @@ import {
   AlertCircle,
   ExternalLink,
 } from 'lucide-react';
-import { NetworkNode, FirewallRule, ProtocolType } from '../types/network';
-import { doesRuleMatchPacket, isIpInCidr } from '../services/networkEngine';
+import { NetworkNode, NetworkLink, FirewallRule, ProtocolType } from '../types/network';
+import {
+  AclContext,
+  evaluateRouterAcl,
+  findPhysicalPath,
+  isValidCidrOrAny,
+  isValidPortSpec,
+  portTowards,
+} from '../services/networkEngine';
+import { INITIAL_NODES } from '../data/topologyData';
 
 interface RouterAclModalProps {
   isOpen: boolean;
   onClose: () => void;
   nodes: NetworkNode[];
+  links?: NetworkLink[];
   selectedRouterId?: string;
   onUpdateRouterRules: (routerId: string, rules: FirewallRule[]) => void;
 }
@@ -202,6 +211,7 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
   isOpen,
   onClose,
   nodes,
+  links = [],
   selectedRouterId = 'r-academico',
   onUpdateRouterRules,
 }) => {
@@ -236,9 +246,10 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
   const [formDestPort, setFormDestPort] = useState<string>('any');
   const [formInterface, setFormInterface] = useState<string>('any');
   const [formDirection, setFormDirection] = useState<'IN' | 'OUT'>('IN');
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Tester state
-  const [testSrcNodeId, setTestSrcNodeId] = useState<string>('pc-guest-1');
+  const [testSrcNodeId, setTestSrcNodeId] = useState<string>('laptop-guest');
   const [testDstNodeId, setTestDstNodeId] = useState<string>('srv-gestion');
   const [testProtocol, setTestProtocol] = useState<ProtocolType | 'ANY'>('TCP');
   const [testDestPort, setTestDestPort] = useState<number>(1521);
@@ -265,6 +276,7 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
     setFormDestPort('any');
     setFormInterface('any');
     setFormDirection('IN');
+    setFormError(null);
     setIsEditing(true);
   };
 
@@ -281,12 +293,27 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
     setFormDestPort(rule.destPort || 'any');
     setFormInterface(rule.interfaceName || 'any');
     setFormDirection(rule.direction || 'IN');
+    setFormError(null);
     setIsEditing(true);
   };
 
   // Save Rule (Add or Edit)
   const handleSaveRule = (e: React.FormEvent) => {
     e.preventDefault();
+
+    const seqNum = Number(formSequence);
+    const problems: string[] = [];
+    if (!Number.isInteger(seqNum) || seqNum < 1 || seqNum > 9999) problems.push('el número de secuencia debe ser un entero entre 1 y 9999');
+    else if (rules.some((r) => r.sequence === seqNum && r.id !== editingRuleId)) problems.push(`ya existe una regla con la secuencia ${seqNum}`);
+    if (!isValidCidrOrAny(formSourceSubnet)) problems.push('la red de origen debe ser "any", una IP o IP/prefijo (ej. 192.168.10.0/24)');
+    if (!isValidCidrOrAny(formDestSubnet)) problems.push('la red de destino debe ser "any", una IP o IP/prefijo (ej. 192.168.100.20/32)');
+    if (!isValidPortSpec(formSourcePort)) problems.push('el puerto de origen debe ser "any", un puerto o lista/rango (ej. 1024-65535)');
+    if (!isValidPortSpec(formDestPort)) problems.push('el puerto de destino debe ser "any", un puerto o lista/rango (ej. 80,443)');
+    if (problems.length) {
+      setFormError(`Revisa la regla: ${problems.join('; ')}.`);
+      return;
+    }
+    setFormError(null);
 
     const ruleData: FirewallRule = {
       id: editingRuleId || `acl-${currentRouter.id}-${Date.now()}`,
@@ -364,114 +391,9 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
 
   // Reset to default
   const handleResetDefaults = () => {
-    if (currentRouter.id === 'r-academico') {
-      const defaultAcademic: FirewallRule[] = [
-        {
-          id: 'acl-acad-10',
-          sequence: 10,
-          aclNumber: 101,
-          description: 'Aislamiento Seguridad: Bloquear acceso desde WiFi Invitados a Subred Aulas 1-3',
-          sourceSubnet: '172.16.50.0/24',
-          destSubnet: '192.168.0.0/16',
-          protocol: 'ANY',
-          action: 'DROP',
-          enabled: true,
-          interfaceName: 'eth4',
-          direction: 'IN',
-          destPort: 'any',
-          sourcePort: 'any',
-        },
-        {
-          id: 'acl-acad-20',
-          sequence: 20,
-          aclNumber: 101,
-          description: 'Aislamiento WiFi: Bloquear tráfico desde Invitados hacia Servidores de Administración',
-          sourceSubnet: '172.16.50.0/24',
-          destSubnet: '192.168.100.0/24',
-          protocol: 'ANY',
-          action: 'DROP',
-          enabled: true,
-          interfaceName: 'eth4',
-          direction: 'IN',
-          destPort: 'any',
-          sourcePort: 'any',
-        },
-        {
-          id: 'acl-acad-30',
-          sequence: 30,
-          aclNumber: 101,
-          description: 'Permitir tráfico web HTTP/HTTPS desde Aulas hacia Servidores y WAN',
-          sourceSubnet: '192.168.0.0/16',
-          destSubnet: 'any',
-          protocol: 'TCP',
-          destPort: '80,443',
-          action: 'ALLOW',
-          enabled: true,
-          interfaceName: 'any',
-          direction: 'IN',
-        },
-        {
-          id: 'acl-acad-40',
-          sequence: 40,
-          aclNumber: 101,
-          description: 'Permitir tráfico ICMP (Ping y Diagnóstico) inter-subredes',
-          sourceSubnet: 'any',
-          destSubnet: 'any',
-          protocol: 'ICMP',
-          action: 'ALLOW',
-          enabled: true,
-          interfaceName: 'any',
-          direction: 'IN',
-        },
-        {
-          id: 'acl-acad-50',
-          sequence: 50,
-          aclNumber: 101,
-          description: 'Permitir consultas DNS (UDP 53) a Servidor DNS Core e Internet',
-          sourceSubnet: 'any',
-          destSubnet: 'any',
-          protocol: 'UDP',
-          destPort: '53',
-          action: 'ALLOW',
-          enabled: true,
-          interfaceName: 'any',
-          direction: 'IN',
-        },
-      ];
-      onUpdateRouterRules('r-academico', defaultAcademic);
-    } else {
-      const defaultAdmin: FirewallRule[] = [
-        {
-          id: 'acl-admin-10',
-          sequence: 10,
-          aclNumber: 102,
-          description: 'Protección Financiera: Bloquear acceso a DB Secretaría (puerto 1521) desde Aulas',
-          sourceSubnet: '192.168.0.0/16',
-          destSubnet: '192.168.100.20/32',
-          protocol: 'TCP',
-          destPort: '1521',
-          action: 'DROP',
-          enabled: true,
-          interfaceName: 'eth0',
-          direction: 'IN',
-        },
-        {
-          id: 'acl-admin-20',
-          sequence: 20,
-          aclNumber: 102,
-          description: 'Acceso Web Académico: Permitir HTTP/HTTPS al Portal Campus y Moodle',
-          sourceSubnet: 'any',
-          destSubnet: '192.168.200.50/32',
-          protocol: 'TCP',
-          destPort: '80,443',
-          action: 'ALLOW',
-          enabled: true,
-          interfaceName: 'any',
-          direction: 'IN',
-        },
-      ];
-      onUpdateRouterRules('r-admin', defaultAdmin);
-    }
+    // Single source of truth: the rules shipped with the initial topology
+    const initial = INITIAL_NODES.find((n) => n.id === currentRouter.id);
+    onUpdateRouterRules(currentRouter.id, (initial?.firewallRules || []).map((r) => ({ ...r })));
   };
 
   // Convert CIDR to Cisco Wildcard mask format for CLI preview
@@ -492,48 +414,111 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
     return `${ip} ${w1}.${w2}.${w3}.${w4}`;
   };
 
-  // Generate Cisco IOS CLI script
+  // Generate Cisco IOS CLI script: one named ACL per interface/direction set of rules
   const generateCiscoCli = (): string => {
-    const aclNum = currentRouter.id === 'r-academico' ? 101 : 102;
-    const lines = [
+    const aclBase = currentRouter.id === 'r-academico' ? 101 : 102;
+    const routerTag = currentRouter.id.toUpperCase().replace(/-/g, '_');
+    const active = [...rules]
+      .filter((r) => r.enabled)
+      .sort((a, b) => (a.sequence ?? 999) - (b.sequence ?? 999));
+
+    const iosProto = (r: FirewallRule) => {
+      const p = (r.protocol || 'ANY').toUpperCase();
+      if (['TCP', 'HTTP', 'HTTPS', 'SSH'].includes(p)) return 'tcp';
+      if (['UDP', 'DNS', 'DHCP'].includes(p)) return 'udp';
+      if (p === 'ICMP') return 'icmp';
+      return 'ip';
+    };
+    const impliedPorts: Record<string, string> = { HTTP: '80,443', HTTPS: '443', DNS: '53', SSH: '22' };
+
+    // A port spec may need several IOS lines (eq a b c / range x y)
+    const portVariants = (spec: string | undefined): string[] => {
+      if (!spec || spec === 'any') return [''];
+      const parts = spec.split(',').map((p) => p.trim()).filter(Boolean);
+      const singles = parts.filter((p) => !p.includes('-'));
+      const ranges = parts.filter((p) => p.includes('-'));
+      return [
+        ...(singles.length ? [` eq ${singles.join(' ')}`] : []),
+        ...ranges.map((r) => ` range ${r.replace('-', ' ')}`),
+      ];
+    };
+
+    const ruleLines = (r: FirewallRule): string[] => {
+      const proto = iosProto(r);
+      const action = r.action === 'ALLOW' ? 'permit' : 'deny';
+      const src = cidrToWildcard(r.sourceSubnet);
+      const dst = cidrToWildcard(r.destSubnet);
+      const usesPorts = proto === 'tcp' || proto === 'udp';
+      const dstSpec = r.destPort && r.destPort !== 'any' ? r.destPort : impliedPorts[(r.protocol || '').toUpperCase()];
+      const srcVariants = usesPorts ? portVariants(r.sourcePort) : [''];
+      const dstVariants = usesPorts ? portVariants(dstSpec) : [''];
+      const lines: string[] = [];
+      let seq = r.sequence ?? 10;
+      for (const sp of srcVariants) {
+        for (const dp of dstVariants) {
+          lines.push(`  ${seq} ${action} ${proto} ${src}${sp} ${dst}${dp}`);
+          seq += 1;
+        }
+      }
+      return lines;
+    };
+
+    const header = [
       `! ========================================================`,
       `! Configuración Cisco IOS - Access Control Lists (ACL)`,
       `! Router: ${currentRouter.name} (${currentRouter.hostname})`,
-      `! Modo: Extended IP Access List ${aclNum}`,
       `! Generado por: Simulador de Redes Educativo`,
       `! Web Oficial: https://www.unfantasmaenelsistema.com/`,
+      `! Interfaces con el nombre del simulador (en un equipo real: GigabitEthernet0/x)`,
       `! ========================================================`,
       `enable`,
       `configure terminal`,
-      `ip access-list extended ACL_${currentRouter.id.toUpperCase().replace('-', '_')}_${aclNum}`,
     ];
 
-    rules
-      .filter((r) => r.enabled)
-      .forEach((r) => {
-        const actionStr = r.action === 'ALLOW' ? 'permit' : 'deny';
-        const protoStr = r.protocol.toLowerCase();
-        const srcStr = cidrToWildcard(r.sourceSubnet);
-        const dstStr = cidrToWildcard(r.destSubnet);
-        let portStr = '';
-        if (r.destPort && r.destPort !== 'any') {
-          if (r.destPort.includes(',')) {
-            portStr = ` eq ${r.destPort.split(',')[0]}`;
-          } else {
-            portStr = ` eq ${r.destPort}`;
-          }
-        }
-        lines.push(`  ${r.sequence || 10} ${actionStr} ${protoStr} ${srcStr} ${dstStr}${portStr}`);
-      });
+    if (active.length === 0) {
+      return [...header, `! No hay reglas activas: no se aplica ninguna ACL.`, `end`].join('\n');
+    }
 
-    lines.push(`  ! Regla implícita final:`);
-    lines.push(`  999 deny ip any any`);
-    lines.push(`exit`);
-    lines.push(``);
-    lines.push(`! Aplicación de la ACL a las interfaces físicas correspondientes:`);
-    lines.push(`interface ${currentRouter.interfaces?.[0]?.name || 'eth0'}`);
-    lines.push(`  ip access-group ACL_${currentRouter.id.toUpperCase().replace('-', '_')}_${aclNum} in`);
-    lines.push(`exit`);
+    // Group interface/direction pairs that receive exactly the same rule list
+    const groups: { name: string; rules: FirewallRule[]; bindings: string[] }[] = [];
+    for (const iface of currentRouter.interfaces) {
+      for (const dir of ['IN', 'OUT'] as const) {
+        const list = active.filter(
+          (r) =>
+            (r.direction || 'IN') === dir &&
+            ((r.interfaceName || 'any') === 'any' || r.interfaceName === iface.name)
+        );
+        if (list.length === 0) continue;
+        const key = list.map((r) => r.id).join('|');
+        const binding = `${iface.name} ${dir.toLowerCase()}`;
+        const existing = groups.find((g) => g.rules.map((r) => r.id).join('|') === key);
+        if (existing) existing.bindings.push(binding);
+        else groups.push({ name: `ACL_${routerTag}_${aclBase}${groups.length ? `_${groups.length + 1}` : ''}`, rules: list, bindings: [binding] });
+      }
+    }
+
+    const lines = [...header];
+    for (const g of groups) {
+      const last = Math.max(...g.rules.map((r) => r.sequence ?? 10));
+      lines.push(`ip access-list extended ${g.name}`);
+      g.rules.forEach((r) => lines.push(`  remark ${r.description.replace(/\s+/g, ' ').slice(0, 90)}`, ...ruleLines(r)));
+      lines.push(`  ! Política del simulador: lo que no coincide se PERMITE.`);
+      lines.push(`  ! En Cisco IOS toda ACL acaba con un "deny ip any any" implícito;`);
+      lines.push(`  ! esta línea reproduce el comportamiento del simulador:`);
+      lines.push(`  ${Math.ceil((last + 1) / 10) * 10 + 10} permit ip any any`);
+      lines.push(`exit`);
+      lines.push(``);
+    }
+
+    lines.push(`! Aplicación de las ACL a las interfaces:`);
+    for (const g of groups) {
+      for (const b of g.bindings) {
+        const [ifaceName, dir] = b.split(' ');
+        lines.push(`interface ${ifaceName}`);
+        lines.push(`  ip access-group ${g.name} ${dir}`);
+        lines.push(`exit`);
+      }
+    }
     lines.push(`end`);
     lines.push(`write memory`);
 
@@ -547,43 +532,58 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
     setTimeout(() => setCopiedCli(false), 2000);
   };
 
-  // Run live rule test
+  // Run live rule test along the real path between both devices
   const handleRunTester = () => {
     const srcNode = nodes.find((n) => n.id === testSrcNodeId);
     const dstNode = nodes.find((n) => n.id === testDstNodeId);
-    if (!srcNode || !dstNode) return;
+    if (!srcNode || !dstNode) {
+      setTestResult({ evaluated: true, allowed: true, explanation: 'Selecciona un equipo de origen y otro de destino.' });
+      return;
+    }
 
     const srcIp = srcNode.primaryIp || '';
     const dstIp = dstNode.primaryIp || '';
-
-    // Evaluate active rules in order
-    const activeRules = [...rules].filter((r) => r.enabled).sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
-
-    let matched: FirewallRule | undefined;
-    for (const rule of activeRules) {
-      if (doesRuleMatchPacket(rule, srcIp, dstIp, testProtocol, testDestPort)) {
-        matched = rule;
-        break;
+    let ctx: AclContext | undefined;
+    const path = links.length ? findPhysicalPath(srcNode.id, dstNode.id, links) : null;
+    if (path) {
+      const idx = path.indexOf(currentRouter.id);
+      if (idx === -1) {
+        const names = path.map((id) => nodes.find((n) => n.id === id)?.name || id).join(' → ');
+        setTestResult({
+          evaluated: true,
+          allowed: true,
+          explanation: `${currentRouter.name} no está en el camino (${names}): sus ACL no afectan a este tráfico.`,
+        });
+        return;
       }
+      ctx = {
+        ingress: idx > 0 ? portTowards(links, currentRouter.id, path[idx - 1]) : undefined,
+        egress: idx < path.length - 1 ? portTowards(links, currentRouter.id, path[idx + 1]) : undefined,
+      };
     }
 
-    if (matched) {
-      const isAllowed = matched.action === 'ALLOW';
+    const res = evaluateRouterAcl({ ...currentRouter, firewallRules: rules }, srcIp, dstIp, testProtocol, testDestPort, 0, ctx);
+    const where = ctx ? ` El paquete entra por ${ctx.ingress ?? '—'} y sale por ${ctx.egress ?? '—'}.` : '';
+
+    if (!res.isAllowed && res.matchedRule) {
       setTestResult({
         evaluated: true,
-        allowed: isAllowed,
-        matchedRule: matched,
-        explanation: isAllowed
-          ? `Coincidencia con Regla #${matched.sequence} ("${matched.description}"). Acción: PERMITIR (ALLOW). El paquete supera este router.`
-          : `Coincidencia con Regla #${matched.sequence} ("${matched.description}"). Acción: DENEGAR (DROP). El router bloquea y descarta el paquete.`,
+        allowed: false,
+        matchedRule: res.matchedRule,
+        explanation: `Coincidencia con Regla #${res.matchedRule.sequence} ("${res.matchedRule.description}") en la lista de ${res.direction === 'OUT' ? 'salida' : 'entrada'}. Acción: DENEGAR (DROP). El router bloquea y descarta el paquete.${where}`,
+      });
+    } else if (res.matchedRule) {
+      setTestResult({
+        evaluated: true,
+        allowed: true,
+        matchedRule: res.matchedRule,
+        explanation: `Coincidencia con Regla #${res.matchedRule.sequence} ("${res.matchedRule.description}"). Acción: PERMITIR (ALLOW). El paquete supera este router.${where}`,
       });
     } else {
       setTestResult({
         evaluated: true,
-        allowed: true, // default allow if no rule matched
-        matchedRule: undefined,
-        explanation:
-          'Ninguna regla explícita coincidió con este paquete. Por política de enrutamiento por defecto se permite el paso del tráfico.',
+        allowed: true,
+        explanation: `Ninguna regla aplicable a esas interfaces coincidió.${where} Política del simulador: se permite el paso (en un router Cisco real, el "deny ip any any" implícito lo descartaría).`,
       });
     }
   };
@@ -919,9 +919,9 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
                   </label>
                   <input
                     type="number"
-                    step="5"
+                    step="1"
                     min="1"
-                    max="9990"
+                    max="9999"
                     value={formSequence}
                     onChange={(e) => setFormSequence(Number(e.target.value))}
                     className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-slate-100 font-mono focus:outline-none focus:border-sky-500"
@@ -1167,6 +1167,13 @@ export const RouterAclModal: React.FC<RouterAclModalProps> = ({
                   </div>
                 </div>
               </div>
+
+              {formError && (
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-rose-950/60 border border-rose-800 text-rose-300 text-xs">
+                  <AlertCircle size={14} className="shrink-0 mt-0.5" />
+                  <span>{formError}</span>
+                </div>
+              )}
 
               {/* Buttons */}
               <div className="flex items-center justify-end gap-3 pt-2">

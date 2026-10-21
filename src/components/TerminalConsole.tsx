@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { NetworkNode } from '../types/network';
+import { getZoneVlan } from '../services/networkEngine';
 import { Terminal, Send, Trash2, HelpCircle, ChevronRight, Sparkles } from 'lucide-react';
 
 interface TerminalProps {
@@ -77,7 +78,7 @@ export const TerminalConsole: React.FC<TerminalProps> = ({
           { label: 'mac-table (VLANs CAM)', cmd: 'mac-table' },
           { label: 'show vlan (Puertos)', cmd: 'show vlan' },
           { label: 'Aislar Puerto 3 (VLAN 99)', cmd: 'vlan set port3 99' },
-          { label: 'Restaurar Puerto 3', cmd: currentNode.zone === 'aula1' ? 'vlan set port3 10' : currentNode.zone === 'aula2' ? 'vlan set port3 20' : 'vlan set port3 30' },
+          { label: 'Restaurar Puerto 3', cmd: `vlan set port3 ${getZoneVlan(currentNode.zone) ?? 1}` },
           { label: 'help', cmd: 'help' },
         ]
       : [
@@ -137,7 +138,7 @@ export const TerminalConsole: React.FC<TerminalProps> = ({
             title="Visitar unfantasmaenelsistema.com"
           >
             <img
-              src="/assets/aistudio/icono_81a3db5b.png"
+              src={`${import.meta.env.BASE_URL}assets/aistudio/icono_81a3db5b.png`}
               alt="Logo"
               className="w-3.5 h-3.5 aspect-square object-contain shrink-0"
             />
