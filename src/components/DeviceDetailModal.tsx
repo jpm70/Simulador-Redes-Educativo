@@ -221,16 +221,31 @@ export const DeviceDetailModal: React.FC<DeviceModalProps> = ({
                             <div className="flex items-center justify-between mt-1 gap-2">
                               <span className="text-slate-400 text-[11px]">Asignar VLAN:</span>
                               <select
-                                value={iface.vlanId || 10}
+                                value={iface.vlanId || 1}
                                 onChange={(e) =>
                                   onPortVlanChange?.(node.id, iface.name, Number(e.target.value))
                                 }
                                 className="bg-slate-950 border border-slate-700 text-sky-300 rounded px-2 py-0.5 text-xs font-semibold focus:outline-none cursor-pointer"
                               >
-                                <option value={10}>VLAN 10 (Aula 1 - Informática)</option>
-                                <option value={20}>VLAN 20 (Aula 2 - Diseño)</option>
-                                <option value={30}>VLAN 30 (Aula 3 - Robótica)</option>
-                                <option value={99}>VLAN 99 (Aislada / Prueba Segmentación)</option>
+                                {[
+                                  [10, 'Aula 1 - Informática'],
+                                  [20, 'Aula 2 - Diseño'],
+                                  [30, 'Aula 3 - Robótica'],
+                                  [50, 'Wi-Fi Invitados'],
+                                  [100, 'Dirección y Secretaría'],
+                                  [200, 'Profesores y Servidores'],
+                                  [99, 'Aislada / Prueba Segmentación'],
+                                ]
+                                  .concat(
+                                    [10, 20, 30, 50, 100, 200, 99].includes(iface.vlanId || 1)
+                                      ? []
+                                      : [[iface.vlanId || 1, 'Personalizada']]
+                                  )
+                                  .map(([id, label]) => (
+                                    <option key={id} value={id}>
+                                      VLAN {id} ({label})
+                                    </option>
+                                  ))}
                               </select>
                             </div>
                           )}
